@@ -40,6 +40,7 @@ NaN 处理
 """
 
 import os
+import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
@@ -160,6 +161,7 @@ def _compute_day(
 
 def _worker(args) -> str:
     """ProcessPoolExecutor worker，处理单日 CS-IC 并写文件。"""
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
     factor_root, base_dir, factor_name, day = args
     day_results = _compute_day(factor_root, factor_name, day)
     for key, df in day_results.items():
