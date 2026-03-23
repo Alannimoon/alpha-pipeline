@@ -31,12 +31,18 @@ def sort_factor_cols(cols: list[str]) -> list[str]:
     return sorted(cols, key=key)
 
 
+def available_cs_dates(factor_name: str, ret_horizon: str, session: str) -> list[str]:
+    """返回 cs_ic 目录下所有可用日期（字符串列表，如 ['20250102', ...]）。"""
+    csv_dir = os.path.join(
+        config.EVAL_ROOT, "cs_ic", factor_name, f"{ret_horizon}_{session}"
+    )
+    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
+    return [os.path.splitext(os.path.basename(f))[0] for f in files]
+
+
 @st.cache_data
 def load_ic_stats(factor_name: str, ic_type: str) -> pd.DataFrame:
-    """
-    读取 ic_stats 汇总表。
-    ic_type: "cs" 或 "ts"
-    """
+    """读取 ic_stats 汇总表。ic_type: 'cs' 或 'ts'"""
     path = os.path.join(
         config.EVAL_ROOT, "ic_stats", factor_name, f"{ic_type}_ic_stats.csv"
     )
@@ -46,15 +52,16 @@ def load_ic_stats(factor_name: str, ic_type: str) -> pd.DataFrame:
 
 
 @st.cache_data
-def load_ts_daily(
+def load_cs_daily_trend(
     factor_name: str, ret_horizon: str, session: str
 ) -> pd.DataFrame:
     """
-    TS-IC：读取逐日文件，每日对所有股票取均值 → 日度均值时序。
-    返回 DataFrame，列：Date, ts_ic_{fc}, ts_rankic_{fc}, ...
+    CS-IC 跨日趋势：每个交易日对所有时间点取均值 → 日度 IC 序列。
+    X 轴 = Date，适合观察因子信号跨日的稳定性与趋势。
+    返回列：Date, ic_{fc}, rankic_{fc}, ...
     """
     csv_dir = os.path.join(
-        config.EVAL_ROOT, "ts_ic", factor_name, f"{ret_horizon}_{session}"
+        config.EVAL_ROOT, "cs_ic", factor_name, f"{ret_horizon}_{session}"
     )
     files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
     if not files:
@@ -63,10 +70,10 @@ def load_ts_daily(
     rows = []
     for f in files:
         day = os.path.splitext(os.path.basename(f))[0]
-        df = pd.read_csv(f, dtype={"SecurityID": str})
+        df = pd.read_csv(f, dtype={"SampleTime": str})
         row = {"Date": day}
         for c in df.columns:
-            if c.startswith("ts_ic_") or c.startswith("ts_rankic_"):
+            if c.startswith("ic_") or c.startswith("rankic_"):
                 row[c] = df[c].mean()
         rows.append(row)
 
@@ -76,22 +83,17 @@ def load_ts_daily(
 
 
 @st.cache_data
-def load_cs_intraday(
-    factor_name: str, ret_horizon: str, session: str
+def load_cs_one_day(
+    factor_name: str, ret_horizon: str, session: str, day: str
 ) -> pd.DataFrame:
     """
-    CS-IC：读取所有日期文件，按 SampleTime 分组取均值 → 日内 IC 模式。
-    返回 DataFrame，列：SampleTime, ic_{fc}, rankic_{fc}, ...
+    CS-IC 单日日内曲线：读取指定日期的文件。
+    X 轴 = SampleTime，适合观察因子信号在日内的分布规律。
+    返回列：SampleTime, ic_{fc}, rankic_{fc}, ...
     """
-    csv_dir = os.path.join(
-        config.EVAL_ROOT, "cs_ic", factor_name, f"{ret_horizon}_{session}"
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_ic", factor_name, f"{ret_horizon}_{session}", f"{day}.csv"
     )
-    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
-    if not files:
+    if not os.path.exists(path):
         return pd.DataFrame()
-
-    dfs = [pd.read_csv(f, dtype={"SampleTime": str}) for f in files]
-    combined = pd.concat(dfs, ignore_index=True)
-
-    ic_cols = [c for c in combined.columns if c.startswith("ic_") or c.startswith("rankic_")]
-    return combined.groupby("SampleTime")[ic_cols].mean().reset_index()
+    return pd.read_csv(path, dtype={"SampleTime": str})
