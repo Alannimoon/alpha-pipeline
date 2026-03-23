@@ -32,7 +32,9 @@ result/eval/cs_quantile/{factor_name}/{ret_horizon}_{session}/{day}.csv
 每天约 4740 行（session 切片后更少）。
 """
 
+import glob
 import os
+import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -193,6 +195,48 @@ def _compute_day(
     return results
 
 
+# ── 汇总生成 ──────────────────────────────────────────────────────────────────
+
+def _build_summary(csv_dir: str) -> None:
+    """
+    读取目录下所有日期文件，计算各组跨所有日期和时刻的收益均值，
+    写入 _summary.csv（列：factor_col, g1, g2, g3, g4, g5）。
+    """
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    if not files:
+        return
+
+    # 每个文件对所有时刻取均值 → 该日各列的均值
+    daily_means = []
+    for f in files:
+        df = pd.read_csv(f, dtype={"SampleTime": str})
+        g_cols = [c for c in df.columns if re.match(r"g\d+_", c)]
+        if g_cols:
+            daily_means.append(df[g_cols].mean())
+
+    if not daily_means:
+        return
+
+    # 跨日再取均值
+    overall = pd.DataFrame(daily_means).mean()
+
+    # 从列名 g{n}_{factor_col} 中拆出 factor_col 和 组号
+    fc_data: dict[str, dict[str, float]] = {}
+    for col, val in overall.items():
+        m = re.match(r"g(\d+)_(.*)", col)
+        if not m:
+            continue
+        g, fc = m.group(1), m.group(2)
+        fc_data.setdefault(fc, {})[f"g{g}"] = val
+
+    rows = [{"factor_col": fc, **vals} for fc, vals in fc_data.items()]
+    summary = pd.DataFrame(rows)[["factor_col", "g1", "g2", "g3", "g4", "g5"]]
+    summary.to_csv(os.path.join(csv_dir, "_summary.csv"), index=False)
+
+
 # ── 批量入口 ──────────────────────────────────────────────────────────────────
 
 def _worker(args) -> str:
@@ -245,5 +289,10 @@ def run_cs_quantile(
                     if tqdm else as_completed(futs)
             for f in inner:
                 f.result()
+
+    # 自动生成每个子目录的汇总文件
+    for h_key in _RET_HORIZONS:
+        for sess in ("all", "am", "pm"):
+            _build_summary(os.path.join(base_dir, f"{h_key}_{sess}"))
 
     print(f"截面分层计算完成：{base_dir}")

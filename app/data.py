@@ -97,33 +97,25 @@ def load_quantile_summary(
     factor_name: str, ret_horizon: str, session: str, factor_col: str,
 ) -> pd.DataFrame:
     """
-    截面分层汇总：读取所有日期文件，
-    先对每天的所有时刻取均值（日度5组均值），再跨日取均值 → 最终5个数。
+    读取预聚合的 _summary.csv，过滤出指定 factor_col 的5组均值。
     返回 DataFrame，列：group(1~5), mean_ret, long_short
     """
-    csv_dir = os.path.join(
-        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", "_summary.csv"
     )
-    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
-    if not files:
+    if not os.path.exists(path):
         return pd.DataFrame()
 
-    g_cols = [f"g{g}_{factor_col}" for g in range(1, 6)]
-    daily_means = []
-    for f in files:
-        df = pd.read_csv(f, dtype={"SampleTime": str})
-        cols_present = [c for c in g_cols if c in df.columns]
-        if not cols_present:
-            continue
-        daily_means.append(df[cols_present].mean())
-
-    if not daily_means:
+    df  = pd.read_csv(path)
+    row = df[df["factor_col"] == factor_col]
+    if row.empty:
         return pd.DataFrame()
 
-    overall = pd.DataFrame(daily_means).mean()
+    g_cols = [f"g{g}" for g in range(1, 6)]
     result = pd.DataFrame({
         "group":    list(range(1, 6)),
-        "mean_ret": [overall.get(c, np.nan) for c in g_cols],
+        "mean_ret": [row[c].values[0] for c in g_cols],
     })
     result["long_short"] = result["mean_ret"].iloc[-1] - result["mean_ret"].iloc[0]
     return result
