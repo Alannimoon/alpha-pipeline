@@ -17,9 +17,9 @@ import argparse
 import sys
 
 import config
-from pipeline.data.sample    import run_sample
-from pipeline.data.clean     import run_clean
-from pipeline.data.base      import run_base
+from pipeline.ingest.sample  import run_sample
+from pipeline.ingest.clean   import run_clean
+from pipeline.ingest.base    import run_base
 from pipeline.factor.compute import run_factors
 from pipeline.eval.cs_ic     import run_cs_ic
 from pipeline.eval.ts_ic     import run_ts_ic
