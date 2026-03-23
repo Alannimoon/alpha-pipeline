@@ -126,33 +126,23 @@ def load_quantile_daily(
     factor_name: str, ret_horizon: str, session: str, factor_col: str,
 ) -> pd.DataFrame:
     """
-    截面分层跨日趋势：每天对所有时刻取均值 → 5组日度均值序列。
+    读取预聚合的 _daily.csv，过滤出指定 factor_col 的日度5组均值序列。
     返回列：Date, g1, g2, g3, g4, g5, long_short
     """
-    csv_dir = os.path.join(
-        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", "_daily.csv"
     )
-    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
-    if not files:
+    if not os.path.exists(path):
         return pd.DataFrame()
 
-    g_cols = [f"g{g}_{factor_col}" for g in range(1, 6)]
-    rows = []
-    for f in files:
-        day = os.path.splitext(os.path.basename(f))[0]
-        df  = pd.read_csv(f, dtype={"SampleTime": str})
-        cols_present = [c for c in g_cols if c in df.columns]
-        if not cols_present:
-            continue
-        means = df[cols_present].mean()
-        row = {"Date": day}
-        for i, c in enumerate(g_cols):
-            row[f"g{i+1}"] = means.get(c, np.nan)
-        rows.append(row)
+    df  = pd.read_csv(path, dtype={"Date": str})
+    out = df[df["factor_col"] == factor_col].copy()
+    if out.empty:
+        return pd.DataFrame()
 
-    out = pd.DataFrame(rows)
-    out["Date"]        = pd.to_datetime(out["Date"])
-    out["long_short"]  = out["g5"] - out["g1"]
+    out["Date"]       = pd.to_datetime(out["Date"])
+    out["long_short"] = out["g5"] - out["g1"]
     return out.sort_values("Date").reset_index(drop=True)
 
 

@@ -197,6 +197,47 @@ def _compute_day(
 
 # ── 汇总生成 ──────────────────────────────────────────────────────────────────
 
+def _build_daily(csv_dir: str) -> None:
+    """
+    读取目录下所有日期文件，每天对所有时刻取均值 → 日度5组均值序列，
+    写入 _daily.csv（列：Date, factor_col, g1, g2, g3, g4, g5）。
+    """
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    if not files:
+        return
+
+    rows = []
+    for f in files:
+        day = os.path.splitext(os.path.basename(f))[0]
+        df  = pd.read_csv(f, dtype={"SampleTime": str})
+        g_cols = [c for c in df.columns if re.match(r"g\d+_", c)]
+        if not g_cols:
+            continue
+        day_means = df[g_cols].mean()
+
+        # 拆出所有 factor_col，每个 factor_col 写一行
+        fc_seen: set[str] = set()
+        for col in g_cols:
+            m = re.match(r"g(\d+)_(.*)", col)
+            if m:
+                fc_seen.add(m.group(2))
+
+        for fc in fc_seen:
+            row = {"Date": day, "factor_col": fc}
+            for g in range(1, 6):
+                row[f"g{g}"] = day_means.get(f"g{g}_{fc}", np.nan)
+            rows.append(row)
+
+    if not rows:
+        return
+
+    daily = pd.DataFrame(rows).sort_values(["factor_col", "Date"]).reset_index(drop=True)
+    daily.to_csv(os.path.join(csv_dir, "_daily.csv"), index=False)
+
+
 def _build_summary(csv_dir: str) -> None:
     """
     读取目录下所有日期文件，计算各组跨所有日期和时刻的收益均值，
@@ -293,6 +334,8 @@ def run_cs_quantile(
     # 自动生成每个子目录的汇总文件
     for h_key in _RET_HORIZONS:
         for sess in ("all", "am", "pm"):
-            _build_summary(os.path.join(base_dir, f"{h_key}_{sess}"))
+            sub_dir = os.path.join(base_dir, f"{h_key}_{sess}")
+            _build_daily(sub_dir)
+            _build_summary(sub_dir)
 
     print(f"截面分层计算完成：{base_dir}")
