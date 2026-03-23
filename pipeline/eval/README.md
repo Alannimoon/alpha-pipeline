@@ -173,29 +173,29 @@ result/eval/ts_ic/{factor_name}/
 
 ### 作用
 
-读取 cs_ic / ts_ic 的逐日结果，输出每个 `(ret_horizon, session, factor_window)` 组合的 IC 均值、标准差和 ICIR。
+读取 cs_ic / ts_ic 的逐日结果，输出每个 `(ret_horizon, session, factor_window)` 组合的 IC 均值和 ICIR。CS 和 TS 采用不同的聚合口径。
 
 ### CS-IC 统计逻辑
 
 ```
 ① 每个交易日：对该日所有时间点的 IC 取均值 → 日度 IC 均值
-② 跨所有交易日：对日度均值再取均值 → ic_mean
+② 跨所有交易日：对日度均值取均值 → ic_mean
 ③ 跨所有交易日：对日度均值取标准差（ddof=1）→ ic_std
 ④ ICIR = ic_mean / ic_std
 ```
 
 日内先平均再跨日，消除日内高频自相关对标准差估计的干扰。
 
-### TS-IC 统计逻辑
+### TS-IC 统计逻辑（按股票聚合）
 
 ```
-① 每只股票：跨所有交易日对 TS-IC 取均值 → 个股 IC 均值
-② 跨所有股票：对个股均值取均值 → ic_mean
-③ 跨所有股票：对个股均值取标准差（ddof=1）→ ic_std
-④ ICIR = ic_mean / ic_std
+① 每只股票：收集其逐日 TS-IC 值序列
+② 每只股票：ICIR_stock = mean(逐日 IC) / std(逐日 IC, ddof=0)
+③ 最终 ICIR   = mean(各股票 ICIR_stock)
+④ 最终 ic_mean = mean(各股票逐日 IC 均值)
 ```
 
-先消除个股日际波动，再跨股票截面描述因子整体的时序预测能力。
+含义：衡量"典型股票"的因子预测力在时间维度上的稳定性。与 CS-IC ICIR（整体信号的跨日稳定性）度量角度不同，不宜直接横向比较大小。`ddof=0` 与历史脚本保持一致。
 
 ### 输出文件
 
@@ -205,21 +205,36 @@ result/eval/ic_stats/{factor_name}/
 └── ts_ic_stats.csv
 ```
 
-输出列：
+**CS 输出列：**
 
 | 列 | 说明 |
 |---|---|
 | `ret_horizon` | `ret100 / ret200 / ret300` |
 | `session` | `all / am / pm` |
-| `factor_window` | 因子计算窗口（分钟），如 15、30、45、60、75 |
+| `factor_window` | 因子计算窗口（分钟） |
 | `factor_col` | 完整列名，如 `bap_15m` |
 | `ic_mean` | IC 均值 |
 | `rankic_mean` | RankIC 均值 |
-| `ic_std` | IC 标准差（仅 1 天时为 NaN） |
+| `ic_std` | IC 标准差（ddof=1） |
 | `rankic_std` | RankIC 标准差 |
 | `icir` | `ic_mean / ic_std` |
 | `rankic_ir` | `rankic_mean / rankic_std` |
-| `n_days` | 参与统计的交易日数（CS）/ 文件数（TS） |
+| `n_days` | 参与统计的交易日数 |
+
+**TS 输出列：**
+
+| 列 | 说明 |
+|---|---|
+| `ret_horizon` | 同上 |
+| `session` | 同上 |
+| `factor_window` | 同上 |
+| `factor_col` | 同上 |
+| `ic_mean` | 各股票逐日 IC 均值的均值 |
+| `rankic_mean` | 各股票逐日 RankIC 均值的均值 |
+| `icir` | 各股票 ICIR 的均值（ddof=0） |
+| `rankic_ir` | 各股票 RankIC IR 的均值（ddof=0） |
+| `n_days` | 交易日文件数 |
+| `n_stocks` | 参与统计的股票数 |
 
 ---
 
@@ -227,13 +242,16 @@ result/eval/ic_stats/{factor_name}/
 
 ### 作用
 
-读取 `ic_stats` 输出的汇总统计，为每个因子生成 6 张图（CS × 3 收益率窗口 + TS × 3 收益率窗口），直观展示不同因子计算窗口下的 IC 表现。
+读取 `ic_stats` 输出的汇总统计，为每个因子生成 6 张图（CS × 3 收益率窗口 + TS × 3 收益率窗口）。
 
 ### 图形规格
 
-- **X 轴**：因子计算窗口（分钟）
-- **Y 轴**：IC 均值
-- **每张图 6 条线**：
+每张图包含**上下两个子图**：
+
+- **上图**：IC 均值（`ic_mean` / `rankic_mean`）
+- **下图**：ICIR（`icir` / `rankic_ir`）
+- **X 轴**：因子计算窗口（分钟），两图共享
+- **每个子图 6 条线**：
 
 | 线 | 颜色 | 样式 |
 |---|---|---|

@@ -64,7 +64,7 @@ python run.py ic_plot  --factor bap             # 8. IC 画图
 | 参数 | 适用阶段 | 说明 |
 |---|---|---|
 | `--date` | sample / clean / base / factors / cs_ic / ts_ic | 只处理指定日期，如 `20250102`；省略则处理所有日期 |
-| `--workers` | sample / clean / base / factors | 并行进程数；省略则使用 CPU 核数 |
+| `--workers` | sample / clean / base / factors / cs_ic / ts_ic | 并行进程数；省略则使用 CPU 核数 |
 | `--factor` | factors / cs_ic / ts_ic / ic_stats / ic_plot | 因子名称，如 `bap` / `mom`；默认 `bap` |
 
 ### 各阶段说明
@@ -77,8 +77,8 @@ python run.py ic_plot  --factor bap             # 8. IC 画图
 | `factors` | `result/base/{date}/` | `result/factor/{factor}/{date}/` |
 | `cs_ic` | `result/factor/{factor}/{date}/` | `result/eval/cs_ic/{factor}/` |
 | `ts_ic` | `result/factor/{factor}/{date}/` | `result/eval/ts_ic/{factor}/` |
-| `ic_stats` | `result/eval/cs_ic/` + `result/eval/ts_ic/` | `result/eval/ic_stats/{factor}/` |
-| `ic_plot` | `result/eval/ic_stats/{factor}/` | `result/eval/ic_stats/{factor}/*.png` |
+| `ic_stats` | `result/eval/cs_ic/` + `result/eval/ts_ic/` | `result/eval/ic_stats/{factor}/`（CS 含 ic_std/ICIR，TS 含 per-stock ICIR 均值） |
+| `ic_plot` | `result/eval/ic_stats/{factor}/` | `result/eval/ic_stats/{factor}/*.png`（每张图含 IC 均值 + ICIR 上下两子图） |
 
 > 前向收益率（ret_fwd_100/200/300）在 `factors` 阶段内联计算，无独立步骤。
 

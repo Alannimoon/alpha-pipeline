@@ -2,29 +2,34 @@
 IC 汇总统计模块。
 
 读取 cs_ic / ts_ic 结果文件，输出每个（因子窗口, 收益率窗口, session）
-组合的 IC 均值、标准差、ICIR。
+组合的 IC 均值、ICIR。
 
 CS-IC 统计逻辑
 --------------
 1. 对每个交易日，将日内所有时间点的 IC 取均值 → 日度 IC 均值
 2. 跨所有交易日对日度均值取均值 → ic_mean
-3. 跨所有交易日对日度均值取标准差 → ic_std（仅 1 天时为 NaN）
+3. 跨所有交易日对日度均值取标准差（ddof=1）→ ic_std
 4. ICIR = ic_mean / ic_std
 
-TS-IC 统计逻辑
---------------
-1. 对每只股票，跨所有交易日取 IC 均值 → 个股 IC 均值
-2. 对所有个股均值取均值 → ic_mean
-3. 对所有个股均值取标准差 → ic_std
-4. ICIR = ic_mean / ic_std
+TS-IC 统计逻辑（方法 C，按股票聚合）
+--------------------------------------
+1. 对每只股票，收集其逐日 TS-IC 序列
+2. 每只股票的 ICIR = mean(逐日 IC) / std(逐日 IC, ddof=0)
+3. 最终 ICIR   = mean(各股票 ICIR)
+4. 最终 ic_mean = mean(各股票逐日 IC 均值)
+
+含义：衡量"典型股票"的因子预测力在时间维度上的稳定性。
+ddof=0 与 origin/daily_year_ts.py 中 RunningStats 保持一致。
 
 输出
 ----
-data/eval/ic_stats/{factor_name}/cs_ic_stats.csv
-data/eval/ic_stats/{factor_name}/ts_ic_stats.csv
+result/eval/ic_stats/{factor_name}/cs_ic_stats.csv
+result/eval/ic_stats/{factor_name}/ts_ic_stats.csv
 
-列：ret_horizon, session, factor_window, ic_mean, rankic_mean,
-    ic_std, rankic_std, icir, rankic_ir, n_days
+CS 列：ret_horizon, session, factor_window, factor_col,
+        ic_mean, rankic_mean, ic_std, rankic_std, icir, rankic_ir, n_days
+TS 列：ret_horizon, session, factor_window, factor_col,
+        ic_mean, rankic_mean, icir, rankic_ir, n_days, n_stocks
 """
 
 import os
@@ -116,10 +121,23 @@ def compute_cs_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
 
 # ── TS-IC ─────────────────────────────────────────────────────────────────────
 
+def _stock_ir(series: pd.Series) -> float:
+    """单只股票的 ICIR：均值 / 总体标准差（ddof=0）。有效样本 < 2 时返回 NaN。"""
+    vals = series.dropna()
+    if len(vals) < 2:
+        return np.nan
+    s = vals.std(ddof=0)
+    return float(vals.mean() / s) if s > 1e-12 else np.nan
+
+
 def _ts_stats_one(csv_dir: str, factor_cols: list[str]) -> dict:
     """
-    读取某个 (ret_horizon, session) 目录下所有日期文件，
-    对每只股票跨日取均值后，再对所有股票取均值/标准差。
+    读取某个 (ret_horizon, session) 目录下所有日期文件。
+
+    方法 C：
+    - 对每只股票收集其逐日 IC 序列
+    - 每只股票 ICIR = mean / std(ddof=0)
+    - 最终 ICIR = mean(各股票 ICIR)
     """
     files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
     if not files:
@@ -135,23 +153,24 @@ def _ts_stats_one(csv_dir: str, factor_cols: list[str]) -> dict:
         if ic_col not in combined.columns:
             continue
 
-        # 每只股票跨日均值
-        per_stock_ic  = combined.groupby("SecurityID")[ic_col].mean()
-        per_stock_ric = combined.groupby("SecurityID")[ric_col].mean()
+        grouped_ic  = combined.groupby("SecurityID")[ic_col]
+        grouped_ric = combined.groupby("SecurityID")[ric_col]
 
-        ic_mean     = per_stock_ic.mean()
-        ic_std      = per_stock_ic.std(ddof=1) if len(per_stock_ic) > 1 else np.nan
-        rankic_mean = per_stock_ric.mean()
-        rankic_std  = per_stock_ric.std(ddof=1) if len(per_stock_ric) > 1 else np.nan
+        # 每只股票的逐日 IC 均值（用于 ic_mean）
+        stock_ic_means  = grouped_ic.mean()
+        stock_ric_means = grouped_ric.mean()
+
+        # 每只股票的 ICIR（mean / std, ddof=0）
+        stock_ic_ir  = grouped_ic.apply(_stock_ir)
+        stock_ric_ir = grouped_ric.apply(_stock_ir)
 
         rows[fc] = {
-            "ic_mean":    ic_mean,
-            "rankic_mean": rankic_mean,
-            "ic_std":     ic_std,
-            "rankic_std": rankic_std,
-            "icir":       ic_mean / ic_std if (not np.isnan(ic_std) and ic_std > 1e-12) else np.nan,
-            "rankic_ir":  rankic_mean / rankic_std if (not np.isnan(rankic_std) and rankic_std > 1e-12) else np.nan,
-            "n_days":     len(files),
+            "ic_mean":     stock_ic_means.mean(),
+            "rankic_mean": stock_ric_means.mean(),
+            "icir":        stock_ic_ir.mean(),
+            "rankic_ir":   stock_ric_ir.mean(),
+            "n_days":      len(files),
+            "n_stocks":    len(stock_ic_means),
         }
     return rows
 
