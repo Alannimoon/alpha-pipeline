@@ -191,10 +191,11 @@ def run_ts_ic(
     max_workers : 并行进程数；None 表示使用 CPU 核数
     """
     if dates is None:
+        factor_day_root = os.path.join(factor_root, factor_name)
         dates = sorted(
-            d for d in os.listdir(factor_root)
+            d for d in os.listdir(factor_day_root)
             if len(d) == 8 and d.isdigit()
-            and os.path.isdir(os.path.join(factor_root, d))
+            and os.path.isdir(os.path.join(factor_day_root, d))
         )
 
     base_dir = os.path.join(eval_root, "ts_ic", factor_name)
