@@ -62,7 +62,7 @@ def load_data(base_path: str, horizons: list[int] = None) -> pd.DataFrame:
     can_use = df["CanUsePrice"]
     for h in horizons:
         fut_price   = price.shift(-h)
-        fut_can_use = can_use.shift(-h).fillna(False)
+        fut_can_use = can_use.shift(-h).fillna(False).astype(bool)
         valid = can_use & fut_can_use
         df[f"ret_fwd_{h}"] = np.where(valid, fut_price / price - 1, np.nan)
 
