@@ -2,19 +2,21 @@
 
 ```
 pipeline/eval/
-├── _panel.py   ← 共享数学工具（因子列提取、宽表 IC 计算）
-├── cs_ic.py    ← 截面 IC
-├── ts_ic.py    ← 时序 IC
-├── ic_stats.py ← IC 汇总统计（均值、标准差、ICIR）
-└── ic_plot.py  ← IC 画图
+├── _panel.py      ← 共享数学工具（因子列提取、宽表 IC 计算）
+├── cs_ic.py       ← 截面 IC
+├── ts_ic.py       ← 时序 IC
+├── ic_stats.py    ← IC 汇总统计（均值、标准差、ICIR）
+├── ic_plot.py     ← IC 画图
+└── cs_quantile.py ← 截面分层（五分位组收益）
 ```
 
 整体流程：
 
 ```
 result/factor/{factor}/
-    ↓ cs_ic.py / ts_ic.py
-result/eval/cs_ic/{factor}/   result/eval/ts_ic/{factor}/
+    ↓ cs_ic.py / ts_ic.py          ↓ cs_quantile.py
+result/eval/cs_ic/{factor}/        result/eval/cs_quantile/{factor}/
+result/eval/ts_ic/{factor}/
     ↓ ic_stats.py
 result/eval/ic_stats/{factor}/cs_ic_stats.csv  ts_ic_stats.csv
     ↓ ic_plot.py
@@ -272,4 +274,59 @@ result/eval/ic_stats/{factor_name}/
 ├── ts_ret100.png
 ├── ts_ret200.png
 └── ts_ret300.png
+```
+
+---
+
+## 6. cs_quantile.py — 截面分层
+
+### 作用
+
+在每个时间点将所有股票按因子值分成 5 组（五分位），计算各组的前向收益均值，
+衡量因子值与收益之间是否存在单调关系。与 IC 分析互补：IC 是相关系数，分层直接展示各组实际收益。
+
+### 分组方式
+
+rank-based 均匀分组，无并列问题：
+
+```
+ranks  = argsort(argsort(factor_vals))   # 0-indexed 排名
+groups = (ranks * Q // n).clip(0, Q-1)  # 映射到 0~Q-1 组
+```
+
+- 第1组（g1）= 因子值最低，第5组（g5）= 因子值最高
+- 每组股票数尽可能相等（n // Q 或 n // Q + 1）
+
+### 涨跌停处理（已知简化）
+
+**当前不对涨跌停做任何处理**，涨跌停股票照常参与分组，其因子值和前向收益均原样使用。
+
+已知问题：
+- 涨跌停时因子值可能失真（如 BAP 在涨停时买一档量极大，因子值恒为接近 1 的极端值）
+- 涨跌停股票的前向收益受约束（涨停后无法买入），导致极端组收益偏差
+
+后续改进方向：在分组前用 `{fc}_has_limit` 列将涨跌停股票排除在该时刻的分组之外。
+
+### 有效股票数阈值
+
+某时刻有效股票数（因子值非 NaN）< 5 时，该时刻所有组记为 NaN，不参与统计。
+早期时刻（因子预热期内）有效股票极少，会自然被过滤。
+
+### 输出目录结构
+
+```
+result/eval/cs_quantile/{factor_name}/
+├── ret100_all/{day}.csv
+├── ret100_am/{day}.csv
+├── ...
+└── ret300_pm/{day}.csv    ← 共 3 horizon × 3 session = 9 个子目录
+```
+
+每个 CSV 列：`Date, SampleTime, g1_{fc}, g2_{fc}, g3_{fc}, g4_{fc}, g5_{fc}, n_valid_{fc}, ...`
+每天约 4740 行（session 切片后更少），保留完整时序供前端灵活聚合。
+
+### 运行命令
+
+```bash
+python run.py cs_quantile --factor bap --workers 16
 ```

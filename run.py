@@ -21,10 +21,11 @@ from pipeline.ingest.sample  import run_sample
 from pipeline.ingest.clean   import run_clean
 from pipeline.ingest.base    import run_base
 from pipeline.factor.compute import run_factors
-from pipeline.eval.cs_ic     import run_cs_ic
-from pipeline.eval.ts_ic     import run_ts_ic
-from pipeline.eval.ic_stats  import run_ic_stats
-from pipeline.eval.ic_plot   import run_ic_plot
+from pipeline.eval.cs_ic       import run_cs_ic
+from pipeline.eval.ts_ic       import run_ts_ic
+from pipeline.eval.ic_stats    import run_ic_stats
+from pipeline.eval.ic_plot     import run_ic_plot
+from pipeline.eval.cs_quantile import run_cs_quantile
 
 
 def main():
@@ -69,6 +70,9 @@ def main():
 
     # ── ic_plot ────────────────────────────────────────────────────────────
     add_factor_only(sub.add_parser("ic_plot",  help="IC 画图：6 张图（CS/TS × 3 ret horizon）"))
+
+    # ── cs_quantile ────────────────────────────────────────────────────────────
+    add_eval(sub.add_parser("cs_quantile", help="截面分层：五分位组收益均值"))
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -122,6 +126,14 @@ def main():
         run_ic_plot(
             eval_root=config.EVAL_ROOT,
             factor_name=args.factor,
+        )
+    elif args.stage == "cs_quantile":
+        run_cs_quantile(
+            factor_root=config.FACTOR_ROOT,
+            eval_root=config.EVAL_ROOT,
+            factor_name=args.factor,
+            dates=dates,
+            max_workers=getattr(args, "workers", None),
         )
     else:
         parser.print_help()

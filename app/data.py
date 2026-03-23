@@ -6,6 +6,7 @@ import glob
 import os
 import re
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -29,6 +30,15 @@ def sort_factor_cols(cols: list[str]) -> list[str]:
         m = re.search(r"(\d+)", c)
         return int(m.group(1)) if m else 0
     return sorted(cols, key=key)
+
+
+def available_quantile_dates(factor_name: str, ret_horizon: str, session: str) -> list[str]:
+    """返回 cs_quantile 目录下所有可用日期。"""
+    csv_dir = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
+    )
+    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
+    return [os.path.splitext(os.path.basename(f))[0] for f in files]
 
 
 def available_cs_dates(factor_name: str, ret_horizon: str, session: str) -> list[str]:
@@ -80,6 +90,104 @@ def load_cs_daily_trend(
     out = pd.DataFrame(rows)
     out["Date"] = pd.to_datetime(out["Date"])
     return out.sort_values("Date").reset_index(drop=True)
+
+
+@st.cache_data
+def load_quantile_summary(
+    factor_name: str, ret_horizon: str, session: str, factor_col: str,
+) -> pd.DataFrame:
+    """
+    截面分层汇总：读取所有日期文件，
+    先对每天的所有时刻取均值（日度5组均值），再跨日取均值 → 最终5个数。
+    返回 DataFrame，列：group(1~5), mean_ret, long_short
+    """
+    csv_dir = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
+    )
+    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
+    if not files:
+        return pd.DataFrame()
+
+    g_cols = [f"g{g}_{factor_col}" for g in range(1, 6)]
+    daily_means = []
+    for f in files:
+        df = pd.read_csv(f, dtype={"SampleTime": str})
+        cols_present = [c for c in g_cols if c in df.columns]
+        if not cols_present:
+            continue
+        daily_means.append(df[cols_present].mean())
+
+    if not daily_means:
+        return pd.DataFrame()
+
+    overall = pd.DataFrame(daily_means).mean()
+    result = pd.DataFrame({
+        "group":    list(range(1, 6)),
+        "mean_ret": [overall.get(c, np.nan) for c in g_cols],
+    })
+    result["long_short"] = result["mean_ret"].iloc[-1] - result["mean_ret"].iloc[0]
+    return result
+
+
+@st.cache_data
+def load_quantile_daily(
+    factor_name: str, ret_horizon: str, session: str, factor_col: str,
+) -> pd.DataFrame:
+    """
+    截面分层跨日趋势：每天对所有时刻取均值 → 5组日度均值序列。
+    返回列：Date, g1, g2, g3, g4, g5, long_short
+    """
+    csv_dir = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
+    )
+    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
+    if not files:
+        return pd.DataFrame()
+
+    g_cols = [f"g{g}_{factor_col}" for g in range(1, 6)]
+    rows = []
+    for f in files:
+        day = os.path.splitext(os.path.basename(f))[0]
+        df  = pd.read_csv(f, dtype={"SampleTime": str})
+        cols_present = [c for c in g_cols if c in df.columns]
+        if not cols_present:
+            continue
+        means = df[cols_present].mean()
+        row = {"Date": day}
+        for i, c in enumerate(g_cols):
+            row[f"g{i+1}"] = means.get(c, np.nan)
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    out["Date"]        = pd.to_datetime(out["Date"])
+    out["long_short"]  = out["g5"] - out["g1"]
+    return out.sort_values("Date").reset_index(drop=True)
+
+
+@st.cache_data
+def load_quantile_one_day(
+    factor_name: str, ret_horizon: str, session: str, day: str, factor_col: str,
+) -> pd.DataFrame:
+    """
+    截面分层单日日内曲线：读取指定日期文件。
+    返回列：SampleTime, g1, g2, g3, g4, g5
+    """
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", f"{day}.csv"
+    )
+    if not os.path.exists(path):
+        return pd.DataFrame()
+
+    g_cols = [f"g{g}_{factor_col}" for g in range(1, 6)]
+    df = pd.read_csv(path, dtype={"SampleTime": str})
+    cols_present = [c for c in g_cols if c in df.columns]
+    if not cols_present:
+        return pd.DataFrame()
+
+    out = df[["SampleTime"] + cols_present].copy()
+    out.columns = ["SampleTime"] + [f"g{i+1}" for i in range(len(cols_present))]
+    return out
 
 
 @st.cache_data
