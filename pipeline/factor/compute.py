@@ -38,12 +38,12 @@ _FACTOR_MAP = {
 # ── 单股票日计算 ──────────────────────────────────────────────────────────────
 
 def _worker(args) -> dict:
-    day, secid, base_path, out_path, horizons, factor_module = args
+    day, secid, base_path, out_path, horizons, factor_name = args
     try:
         df      = load_data(base_path, horizons)
         meta    = df[["Date", "SampleTime", "SecurityID", "Market",
                       "ret_fwd_100", "ret_fwd_200", "ret_fwd_300"]].copy()
-        factors = factor_module.compute(df)
+        factors = _FACTOR_MAP[factor_name].compute(df)
         out     = pd.concat([meta, factors], axis=1)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         out.to_csv(out_path, index=False)
@@ -82,7 +82,6 @@ def run_factors(
     """
     if factor_name not in _FACTOR_MAP:
         raise ValueError(f"未知因子 '{factor_name}'，可选：{list(_FACTOR_MAP)}")
-    factor_module  = _FACTOR_MAP[factor_name]
     factor_out_root = os.path.join(factor_root, factor_name)
     os.makedirs(factor_out_root, exist_ok=True)
 
@@ -108,7 +107,7 @@ def run_factors(
                 os.path.join(base_day_dir, f),
                 os.path.join(out_day_dir, f),
                 horizons,
-                factor_module,
+                factor_name,
             ))
 
     if max_workers == 1:
