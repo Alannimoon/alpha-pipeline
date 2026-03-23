@@ -81,7 +81,7 @@ def quantile_bar_chart(summary_df: pd.DataFrame) -> go.Figure:
         xaxis_title="分组（因子值由低到高）",
         yaxis_title="前向收益均值",
         yaxis_tickformat=".4%",
-        height=380, margin=dict(t=30),
+        height=480, margin=dict(t=30),
     )
     return fig
 
@@ -110,7 +110,7 @@ def quantile_daily_chart(daily_df: pd.DataFrame) -> go.Figure:
         xaxis_title="Date",
         yaxis_title="日度组均收益",
         yaxis_tickformat=".4%",
-        height=420, margin=dict(t=30),
+        height=560, margin=dict(t=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
@@ -134,7 +134,7 @@ def quantile_intraday_chart(intraday_df: pd.DataFrame, day: str) -> go.Figure:
         xaxis_title="SampleTime",
         yaxis_title=f"组均收益  {day}",
         yaxis_tickformat=".4%",
-        height=420, margin=dict(t=30),
+        height=560, margin=dict(t=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         xaxis=dict(tickangle=45, nticks=20),
     )
