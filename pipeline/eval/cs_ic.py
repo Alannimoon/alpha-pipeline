@@ -70,7 +70,7 @@ def _build_wide_tables(
     wide: {列名: DataFrame(行=SampleTime, 列=SecurityID)}
     跳过 _has_limit 列和其他元数据列，只加载计算 IC 所需的列。
     """
-    day_dir = os.path.join(factor_root, day)
+    day_dir = os.path.join(factor_root, factor_name, day)
     files = sorted(
         f for f in os.listdir(day_dir)
         if f.endswith(".csv") and not f.startswith("_")

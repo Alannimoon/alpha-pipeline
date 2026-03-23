@@ -54,7 +54,9 @@ def main():
     add_common(sub.add_parser("base",    help="Base：价格定义、涨跌停标注、盘口掩码"))
 
     # ── factors ────────────────────────────────────────────────────────────
-    add_common(sub.add_parser("factors", help="因子：计算所有因子（含内联收益率）"))
+    p_factors = sub.add_parser("factors", help="因子：计算指定因子（含内联收益率）")
+    add_common(p_factors)
+    p_factors.add_argument("--factor", default="bap", help="因子名称，如 bap / mom")
 
     # ── cs_ic ──────────────────────────────────────────────────────────────
     add_eval(sub.add_parser("cs_ic",   help="截面 IC：按 (Date, SampleTime) 分组"))
@@ -95,6 +97,7 @@ def main():
         run_factors(
             base_root=config.BASE_ROOT,
             factor_root=config.FACTOR_ROOT,
+            factor_name=args.factor,
             horizons=config.RETURN_HORIZONS,
             dates=dates, max_workers=args.workers,
         )

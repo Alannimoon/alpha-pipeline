@@ -102,7 +102,7 @@ def _compute_day(
     每只股票贡献 9 行（3 horizon × 3 session），每行一个字典追加到对应列表，
     最后一次性转成 DataFrame，避免行拼接开销。
     """
-    day_dir = os.path.join(factor_root, day)
+    day_dir = os.path.join(factor_root, factor_name, day)
     files = sorted(
         f for f in os.listdir(day_dir)
         if f.endswith(".csv") and not f.startswith("_")

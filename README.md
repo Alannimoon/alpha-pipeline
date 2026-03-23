@@ -15,13 +15,14 @@ factor/
 │   ├── factor/
 │   └── eval/
 ├── pipeline/
-│   ├── data/                ← 数据处理（README 见同目录）
+│   ├── ingest/              ← 数据处理（README 见同目录）
 │   │   ├── sample.py
 │   │   ├── clean.py
 │   │   └── base.py
 │   ├── factor/              ← 因子计算（README 见同目录）
 │   │   ├── _core.py
 │   │   ├── bap.py
+│   │   ├── mom.py
 │   │   └── compute.py
 │   └── eval/                ← 因子评估（README 见同目录）
 │       ├── _panel.py
@@ -43,7 +44,7 @@ factor/
 python run.py sample   --date 20250102          # 1. 重采样
 python run.py clean    --date 20250102          # 2. 清洗
 python run.py base     --date 20250102          # 3. 生成 base（价格、掩码）
-python run.py factors  --date 20250102          # 4. 计算因子（含内联收益率）
+python run.py factors  --date 20250102 --factor bap  # 4. 计算因子（含内联收益率）
 python run.py cs_ic    --date 20250102 --factor bap  # 5. 截面 IC
 python run.py ts_ic    --date 20250102 --factor bap  # 6. 时序 IC
 python run.py ic_stats --factor bap             # 7. IC 汇总统计
@@ -64,7 +65,7 @@ python run.py ic_plot  --factor bap             # 8. IC 画图
 |---|---|---|
 | `--date` | sample / clean / base / factors / cs_ic / ts_ic | 只处理指定日期，如 `20250102`；省略则处理所有日期 |
 | `--workers` | sample / clean / base / factors | 并行进程数；省略则使用 CPU 核数 |
-| `--factor` | cs_ic / ts_ic / ic_stats / ic_plot | 因子名称，如 `bap`；默认 `bap` |
+| `--factor` | factors / cs_ic / ts_ic / ic_stats / ic_plot | 因子名称，如 `bap` / `mom`；默认 `bap` |
 
 ### 各阶段说明
 
@@ -73,9 +74,9 @@ python run.py ic_plot  --factor bap             # 8. IC 画图
 | `sample` | `data/{date}/` | `result/sampled/{date}/` |
 | `clean` | `result/sampled/{date}/` | `result/cleaned/{date}/` |
 | `base` | `result/cleaned/{date}/` | `result/base/{date}/` |
-| `factors` | `result/base/{date}/` | `result/factor/{date}/` |
-| `cs_ic` | `result/factor/{date}/` | `result/eval/cs_ic/{factor}/` |
-| `ts_ic` | `result/factor/{date}/` | `result/eval/ts_ic/{factor}/` |
+| `factors` | `result/base/{date}/` | `result/factor/{factor}/{date}/` |
+| `cs_ic` | `result/factor/{factor}/{date}/` | `result/eval/cs_ic/{factor}/` |
+| `ts_ic` | `result/factor/{factor}/{date}/` | `result/eval/ts_ic/{factor}/` |
 | `ic_stats` | `result/eval/cs_ic/` + `result/eval/ts_ic/` | `result/eval/ic_stats/{factor}/` |
 | `ic_plot` | `result/eval/ic_stats/{factor}/` | `result/eval/ic_stats/{factor}/*.png` |
 

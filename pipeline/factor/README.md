@@ -130,9 +130,10 @@ bap_{W}m_has_limit(t) = 过去 W 个 tick 内是否存在涨跌停 tick
 
 ### 作用
 
-批量读取 base 数据（收益率内联计算），调用所有注册的因子模块，将所有因子列拼接后写出 CSV。
+批量读取 base 数据（收益率内联计算），调用**指定的单个因子模块**，将结果写出 CSV。每个因子独立存入各自的子目录，互不干扰，可以单独重跑。
 
 ### 并行策略
+
 所有日期、所有股票的 `(day, stock)` 任务打平为单一任务池并行执行（日间和日内同时并行）。`_worker` 内部负责创建输出目录，任务完成后按日期分组回写 per-day `_summary.csv`。
 
 ### 输出文件格式
@@ -148,12 +149,19 @@ ret_fwd_100, ret_fwd_200, ret_fwd_300,
 ### 输出目录结构
 
 ```
-data/factor/
-├── 20250102/
-│   ├── 000001.csv
-│   ├── ...
-│   └── _summary.csv    ← 各因子列的有效 tick 数统计（nnz_{factor_col}）
-└── _summary.csv
+result/factor/
+├── bap/
+│   ├── 20250102/
+│   │   ├── 000001.csv
+│   │   ├── ...
+│   │   └── _summary.csv    ← 各因子列的有效 tick 数统计（nnz_{factor_col}）
+│   └── _summary.csv
+└── mom/
+    ├── 20250102/
+    │   ├── 000001.csv
+    │   ├── ...
+    │   └── _summary.csv
+    └── _summary.csv
 ```
 
 `_summary.csv` 中的 `nnz_{col}` 统计仅针对因子值列（不含 `_has_limit` 列）。
@@ -167,10 +175,13 @@ data/factor/
        # 输出：只含因子列的 df，index 与输入对齐
    ```
 
-2. 在 `compute.py` 中注册：
+2. 在 `compute.py` 的 `_FACTOR_MAP` 中注册：
    ```python
    from . import <name>
-   _FACTORS = [..., <name>]
+   _FACTOR_MAP = {..., "<name>": <name>}
    ```
 
-编排器自动合并所有因子列，无需其他改动。
+3. 运行：
+   ```bash
+   python run.py factors --factor <name> --workers 16
+   ```

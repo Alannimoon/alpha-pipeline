@@ -12,7 +12,7 @@ pipeline/eval/
 整体流程：
 
 ```
-result/factor/
+result/factor/{factor}/
     ↓ cs_ic.py / ts_ic.py
 result/eval/cs_ic/{factor}/   result/eval/ts_ic/{factor}/
     ↓ ic_stats.py
