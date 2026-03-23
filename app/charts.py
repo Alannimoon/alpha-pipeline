@@ -54,20 +54,12 @@ def ic_summary_chart(
     return fig
 
 
-def ic_timeseries_chart(
-    daily_df: pd.DataFrame,
-    factor_col: str,
-    ic_type: str,
-) -> go.Figure:
+def ts_daily_chart(daily_df: pd.DataFrame, factor_col: str) -> go.Figure:
     """
-    日度 IC 时序图：X = 日期，Y = 当日平均 IC / RankIC。
+    TS-IC 跨日趋势图：X = 日期，Y = 当日所有股票的 TS-IC 均值。
     """
-    if ic_type == "cs":
-        ic_col  = f"ic_{factor_col}"
-        ric_col = f"rankic_{factor_col}"
-    else:
-        ic_col  = f"ts_ic_{factor_col}"
-        ric_col = f"ts_rankic_{factor_col}"
+    ic_col  = f"ts_ic_{factor_col}"
+    ric_col = f"ts_rankic_{factor_col}"
 
     fig = go.Figure()
     if ic_col in daily_df.columns:
@@ -84,9 +76,41 @@ def ic_timeseries_chart(
     fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
     fig.update_layout(
         xaxis_title="Date",
-        yaxis_title="IC",
+        yaxis_title="TS-IC（跨股票均值）",
         height=420,
         margin=dict(t=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+def cs_intraday_chart(intraday_df: pd.DataFrame, factor_col: str) -> go.Figure:
+    """
+    CS-IC 日内模式图：X = SampleTime，Y = 所有日期在该时刻的 IC 均值。
+    展示因子在一天内不同时段的截面预测力。
+    """
+    ic_col  = f"ic_{factor_col}"
+    ric_col = f"rankic_{factor_col}"
+
+    fig = go.Figure()
+    if ic_col in intraday_df.columns:
+        fig.add_trace(go.Scatter(
+            x=intraday_df["SampleTime"], y=intraday_df[ic_col],
+            name="IC", line=dict(color="#1f77b4"),
+        ))
+    if ric_col in intraday_df.columns:
+        fig.add_trace(go.Scatter(
+            x=intraday_df["SampleTime"], y=intraday_df[ric_col],
+            name="RankIC", line=dict(color="#ff7f0e", dash="dash"),
+        ))
+
+    fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
+    fig.update_layout(
+        xaxis_title="SampleTime",
+        yaxis_title="CS-IC（跨日均值）",
+        height=420,
+        margin=dict(t=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(tickangle=45, nticks=20),
     )
     return fig

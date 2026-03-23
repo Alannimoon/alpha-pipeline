@@ -4,6 +4,7 @@
 
 import glob
 import os
+import re
 
 import pandas as pd
 import streamlit as st
@@ -22,6 +23,14 @@ def available_factors() -> list[str]:
     )
 
 
+def sort_factor_cols(cols: list[str]) -> list[str]:
+    """按列名中的数字排序，如 mom_5m < mom_10m < mom_45m。"""
+    def key(c):
+        m = re.search(r"(\d+)", c)
+        return int(m.group(1)) if m else 0
+    return sorted(cols, key=key)
+
+
 @st.cache_data
 def load_ic_stats(factor_name: str, ic_type: str) -> pd.DataFrame:
     """
@@ -37,17 +46,15 @@ def load_ic_stats(factor_name: str, ic_type: str) -> pd.DataFrame:
 
 
 @st.cache_data
-def load_daily_ic(
-    factor_name: str, ic_type: str, ret_horizon: str, session: str
+def load_ts_daily(
+    factor_name: str, ret_horizon: str, session: str
 ) -> pd.DataFrame:
     """
-    读取逐日 IC 文件并聚合为日度时序。
-
-    CS：每日对所有时间点取均值 → 日度 IC
-    TS：每日对所有股票取均值   → 日度 IC
+    TS-IC：读取逐日文件，每日对所有股票取均值 → 日度均值时序。
+    返回 DataFrame，列：Date, ts_ic_{fc}, ts_rankic_{fc}, ...
     """
     csv_dir = os.path.join(
-        config.EVAL_ROOT, f"{ic_type}_ic", factor_name, f"{ret_horizon}_{session}"
+        config.EVAL_ROOT, "ts_ic", factor_name, f"{ret_horizon}_{session}"
     )
     files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
     if not files:
@@ -58,16 +65,33 @@ def load_daily_ic(
         day = os.path.splitext(os.path.basename(f))[0]
         df = pd.read_csv(f, dtype={"SecurityID": str})
         row = {"Date": day}
-        if ic_type == "cs":
-            for c in df.columns:
-                if c.startswith("ic_") or c.startswith("rankic_"):
-                    row[c] = df[c].mean()
-        else:
-            for c in df.columns:
-                if c.startswith("ts_ic_") or c.startswith("ts_rankic_"):
-                    row[c] = df[c].mean()
+        for c in df.columns:
+            if c.startswith("ts_ic_") or c.startswith("ts_rankic_"):
+                row[c] = df[c].mean()
         rows.append(row)
 
     out = pd.DataFrame(rows)
     out["Date"] = pd.to_datetime(out["Date"])
     return out.sort_values("Date").reset_index(drop=True)
+
+
+@st.cache_data
+def load_cs_intraday(
+    factor_name: str, ret_horizon: str, session: str
+) -> pd.DataFrame:
+    """
+    CS-IC：读取所有日期文件，按 SampleTime 分组取均值 → 日内 IC 模式。
+    返回 DataFrame，列：SampleTime, ic_{fc}, rankic_{fc}, ...
+    """
+    csv_dir = os.path.join(
+        config.EVAL_ROOT, "cs_ic", factor_name, f"{ret_horizon}_{session}"
+    )
+    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
+    if not files:
+        return pd.DataFrame()
+
+    dfs = [pd.read_csv(f, dtype={"SampleTime": str}) for f in files]
+    combined = pd.concat(dfs, ignore_index=True)
+
+    ic_cols = [c for c in combined.columns if c.startswith("ic_") or c.startswith("rankic_")]
+    return combined.groupby("SampleTime")[ic_cols].mean().reset_index()
