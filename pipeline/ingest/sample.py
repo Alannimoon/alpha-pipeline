@@ -106,8 +106,9 @@ def resample_one_file(in_path: str, out_path: str, day: str,
 
     # 整理输出列顺序
     date_str = datetime.strptime(day, "%Y%m%d").strftime("%Y-%m-%d")
-    sampled["Date"] = date_str                                # 覆盖原始 Date 列
+    sampled["Date"]       = date_str
     sampled["SampleTime"] = sampled["SampleTime"].dt.strftime("%H:%M:%S")
+    sampled["SecurityID"] = sampled["SecurityID"].astype(str).str.zfill(6)
 
     vol_col    = "TradVolume" if "TradVolume" in sampled.columns else \
                  ("Volume"    if "Volume"    in sampled.columns else None)
