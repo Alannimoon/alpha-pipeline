@@ -441,7 +441,7 @@ def _build_cum_tick_chart(csv_dir: str) -> None:
 
         # 每天第一个 tick 的位置 → 用于标注日期边界
         day_starts = tick_df.groupby("Date", sort=False).apply(
-            lambda g: g.index[0] - tick_df.index[0]
+            lambda g: g.index[0] - tick_df.index[0], include_groups=False
         )
 
         fig, ax = plt.subplots(figsize=(14, 5))
