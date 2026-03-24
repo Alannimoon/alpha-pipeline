@@ -385,45 +385,27 @@ def _build_cum_daily(csv_dir: str) -> None:
 
 def _build_monotonicity(csv_dir: str) -> None:
     """
-    逐 tick 计算单调性得分 = (g1 - g5) / (g2 - g4)，按日聚合。
+    从 _cum_daily.csv 算每天日增量，再计算单调性得分。
 
-    读取原始分层日期文件（非 _ 开头），写 _monotonicity_daily.csv。
-    列：factor_col, Date, mono_mean, mono_std
+    mono_score[d] = (g1_inc - g5_inc) / (g2_inc - g4_inc)
+    其中 gX_inc[d] = cum_gX[d] - cum_gX[d-1]（当天实际日收益）。
+    写 _monotonicity_daily.csv，列：factor_col, Date, mono_score
     """
-    files = sorted(
-        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
-        if not os.path.basename(f).startswith("_")
-    )
-    if not files:
+    cum_path = os.path.join(csv_dir, "_cum_daily.csv")
+    if not os.path.exists(cum_path):
         return
 
-    first_cols = pd.read_csv(files[0], nrows=0).columns.tolist()
-    fc_list = sorted({m.group(1) for col in first_cols
-                      if (m := re.match(r"g\d+_(.*)", col))})
-    if not fc_list:
-        return
-
+    cum_df = pd.read_csv(cum_path, dtype={"Date": str})
     rows = []
-    file_iter = tqdm(files, desc="monotonicity") if tqdm else files
-    for f in file_iter:
-        day = os.path.splitext(os.path.basename(f))[0]
-        df  = pd.read_csv(f, dtype={"SampleTime": str})
-        for fc in fc_list:
-            g1 = df.get(f"g1_{fc}")
-            g2 = df.get(f"g2_{fc}")
-            g4 = df.get(f"g4_{fc}")
-            g5 = df.get(f"g5_{fc}")
-            if any(x is None for x in (g1, g2, g4, g5)):
+    for fc, grp in cum_df.groupby("factor_col"):
+        grp = grp.sort_values("Date").reset_index(drop=True)
+        inc = grp[["g1", "g2", "g4", "g5"]].diff()  # 第0行为 NaN，跳过
+        for i in range(1, len(grp)):
+            g1, g2, g4, g5 = inc.loc[i, "g1"], inc.loc[i, "g2"], inc.loc[i, "g4"], inc.loc[i, "g5"]
+            denom = g2 - g4
+            if any(np.isnan(v) for v in (g1, g2, g4, g5)) or abs(denom) < 1e-12:
                 continue
-            m1, m2, m4, m5 = g1.mean(), g2.mean(), g4.mean(), g5.mean()
-            denom = m2 - m4
-            if abs(denom) < 1e-12 or any(np.isnan(v) for v in (m1, m2, m4, m5)):
-                continue
-            rows.append({
-                "factor_col": fc,
-                "Date":       day,
-                "mono_score": (m1 - m5) / denom,
-            })
+            rows.append({"factor_col": fc, "Date": grp.loc[i, "Date"], "mono_score": (g1 - g5) / denom})
 
     if not rows:
         return
@@ -431,6 +413,7 @@ def _build_monotonicity(csv_dir: str) -> None:
        .sort_values(["factor_col", "Date"])
        .reset_index(drop=True)
        .to_csv(os.path.join(csv_dir, "_monotonicity_daily.csv"), index=False))
+
 
 
 
