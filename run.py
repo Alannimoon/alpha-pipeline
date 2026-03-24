@@ -25,7 +25,7 @@ from pipeline.eval.cs_ic       import run_cs_ic
 from pipeline.eval.ts_ic       import run_ts_ic
 from pipeline.eval.ic_stats    import run_ic_stats
 from pipeline.eval.ic_plot     import run_ic_plot
-from pipeline.eval.cs_quantile import run_cs_quantile
+from pipeline.eval.cs_quantile import run_cs_quantile, run_cs_quantile_chart
 
 
 def main():
@@ -73,6 +73,9 @@ def main():
 
     # ── cs_quantile ────────────────────────────────────────────────────────────
     add_eval(sub.add_parser("cs_quantile", help="截面分层：五分位组收益均值"))
+
+    # ── cs_quantile_chart ──────────────────────────────────────────────────────
+    add_factor_only(sub.add_parser("cs_quantile_chart", help="重新生成截面分层跨日 tick 图（不重跑分层计算）"))
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -134,6 +137,11 @@ def main():
             factor_name=args.factor,
             dates=dates,
             max_workers=getattr(args, "workers", None),
+        )
+    elif args.stage == "cs_quantile_chart":
+        run_cs_quantile_chart(
+            eval_root=config.EVAL_ROOT,
+            factor_name=args.factor,
         )
     else:
         parser.print_help()

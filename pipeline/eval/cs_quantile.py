@@ -454,22 +454,24 @@ def _build_cum_tick_chart(csv_dir: str) -> None:
             ax.plot(x, tick_df["long_short"], color="black",
                     linewidth=1.2, label="L/S(g5-g1)")
 
-        # 每月第一个交易日画竖线 + 标注日期
+        # 每月第一个交易日画竖线，收集刻度位置和标签
+        tick_positions, tick_labels = [], []
         prev_month = None
         for date, pos in day_starts.items():
             month = date[:6]
             if month != prev_month:
                 ax.axvline(pos, color="gray", linewidth=0.4, linestyle="--")
-                ax.text(pos, ax.get_ylim()[0], date[4:],
-                        fontsize=6, rotation=90, va="bottom", color="gray")
+                tick_positions.append(pos)
+                tick_labels.append(f"{date[:4]}-{date[4:6]}")
                 prev_month = month
 
         ax.axhline(0, color="black", linewidth=0.6, linestyle=":")
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.2%}"))
-        ax.set_xlabel("Tick (sequential)")
+        ax.set_xlabel("")
         ax.set_ylabel("Cumulative Return (tick-level)")
         ax.set_title(f"{fc}  Cross-Day Tick Cumulative Return")
-        ax.set_xticks([])
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=8)
         ax.legend(loc="upper left", ncol=6, fontsize=8)
         fig.tight_layout()
         fig.savefig(
@@ -542,3 +544,13 @@ def run_cs_quantile(
         _build_cum_tick_chart(sub_dir)
 
     print(f"截面分层计算完成：{base_dir}")
+
+
+def run_cs_quantile_chart(eval_root: str, factor_name: str):
+    """只重新生成跨日 tick 静态图，不重跑分层计算。"""
+    base_dir = os.path.join(eval_root, "cs_quantile", factor_name)
+    for h_key in _RET_HORIZONS:
+        sub_dir = os.path.join(base_dir, f"{h_key}_all")
+        if os.path.isdir(sub_dir):
+            _build_cum_tick_chart(sub_dir)
+    print(f"图表重新生成完成：{base_dir}")
