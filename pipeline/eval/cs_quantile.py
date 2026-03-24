@@ -301,7 +301,8 @@ def _build_cum_tick(csv_dir: str) -> None:
     if not fc_list:
         return
 
-    for f in files:
+    file_iter = tqdm(files, desc="cum_tick") if tqdm else files
+    for f in file_iter:
         day = os.path.splitext(os.path.basename(f))[0]
         df  = pd.read_csv(f, dtype={"SampleTime": str})
 
@@ -341,7 +342,8 @@ def _build_cum_daily(csv_dir: str) -> None:
         return
 
     rows = []
-    for f in files:
+    file_iter = tqdm(files, desc="cum_daily") if tqdm else files
+    for f in file_iter:
         m = re.search(r"_cum_tick_(\d+)\.csv$", os.path.basename(f))
         if not m:
             continue
@@ -349,6 +351,13 @@ def _build_cum_daily(csv_dir: str) -> None:
         df  = pd.read_csv(f, dtype={"SampleTime": str})
         # 每个 factor_col 的最后一行 = 当日日内总收益
         last = df.groupby("factor_col").last().reset_index()
+        # 统计当日每个 factor_col 的有效 tick 数（g5 非 NaN 的行数）
+        n_valid = (
+            df.groupby("factor_col")["g5"]
+            .apply(lambda x: x.notna().sum())
+            .reset_index(name="n_ticks")
+        )
+        last = last.merge(n_valid, on="factor_col")
         last.insert(1, "Date", day)
         rows.append(last)
 
@@ -362,11 +371,12 @@ def _build_cum_daily(csv_dir: str) -> None:
     )
     g_cols = [f"g{g}" for g in range(1, 6) if f"g{g}" in all_last.columns]
 
-    # 对每个 factor_col 独立跨日 cumsum
-    all_last[g_cols] = all_last.groupby("factor_col")[g_cols].cumsum()
+    # 对每个 factor_col 独立跨日 cumsum（含 n_ticks）
+    cum_cols = g_cols + ["n_ticks"]
+    all_last[cum_cols] = all_last.groupby("factor_col")[cum_cols].cumsum()
     all_last["long_short"] = all_last["g5"] - all_last["g1"]
 
-    keep = ["factor_col", "Date"] + g_cols + ["long_short"]
+    keep = ["factor_col", "Date"] + g_cols + ["long_short", "n_ticks"]
     all_last[keep].to_csv(os.path.join(csv_dir, "_cum_daily.csv"), index=False)
 
 

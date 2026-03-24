@@ -18,6 +18,7 @@ from data import (
     load_ic_stats, sort_factor_cols,
     load_cs_daily_trend, load_cs_one_day,
     load_quantile_tick_cum, load_quantile_tick_one_day, load_quantile_daily_cum,
+    load_quantile_pnl_stats,
 )
 from charts import (
     ic_summary_chart, cs_daily_trend_chart, cs_intraday_chart,
@@ -183,3 +184,19 @@ with tab_quantile:
         else:
             st.caption(f"共 {len(daily_df)} 个交易日，跨日累计收益。")
             st.plotly_chart(quantile_daily_cum_chart(daily_df), use_container_width=True)
+
+    # ── PnL 统计 ──────────────────────────────────────────────────────────────
+    pnl = load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
+    if pnl:
+        st.divider()
+        st.subheader("每 tick 平均收益（全周期汇总）")
+        n_ticks = pnl.get("n_ticks")
+        if n_ticks:
+            st.caption(f"总有效 tick 数：{int(n_ticks):,}")
+        cols = st.columns(6)
+        labels = ["g1（最低）", "g2", "g3", "g4", "g5（最高）", "多空(g5-g1)"]
+        keys   = ["g1", "g2", "g3", "g4", "g5", "long_short"]
+        for col_ui, label, key in zip(cols, labels, keys):
+            avg_val = pnl.get(f"avg_{key}")
+            if avg_val is not None:
+                col_ui.metric(label, f"{avg_val:.4%}")

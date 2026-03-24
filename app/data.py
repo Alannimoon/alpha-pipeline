@@ -207,6 +207,43 @@ def load_quantile_daily_cum(
 
 
 @st.cache_data
+def load_quantile_pnl_stats(
+    factor_name: str, ret_horizon: str, session: str, factor_col: str,
+) -> dict:
+    """
+    从 _cum_daily.csv 读取最后一行，返回各组总累计收益和每 tick 平均收益。
+
+    返回 dict 包含：
+      g1~g5, long_short: 总累计收益
+      n_ticks: 总 tick 数
+      avg_g1~avg_g5, avg_long_short: 每 tick 平均收益
+    """
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", "_cum_daily.csv"
+    )
+    if not os.path.exists(path):
+        return {}
+    df = pd.read_csv(path, dtype={"Date": str})
+    sub = df[df["factor_col"] == factor_col]
+    if sub.empty:
+        return {}
+    last = sub.iloc[-1]
+    result = {}
+    g_cols = [f"g{g}" for g in range(1, 6)] + ["long_short"]
+    for c in g_cols:
+        if c in last.index:
+            result[c] = float(last[c])
+    n_ticks = float(last["n_ticks"]) if "n_ticks" in last.index else None
+    result["n_ticks"] = n_ticks
+    if n_ticks and n_ticks > 0:
+        for c in g_cols:
+            if c in result:
+                result[f"avg_{c}"] = result[c] / n_ticks
+    return result
+
+
+@st.cache_data
 def load_cs_one_day(
     factor_name: str, ret_horizon: str, session: str, day: str
 ) -> pd.DataFrame:
