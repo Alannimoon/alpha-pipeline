@@ -190,10 +190,16 @@ with tab_quantile:
         n_ticks = pnl.get("n_ticks")
         if n_ticks:
             st.caption(f"总有效 tick 数：{int(n_ticks):,}")
-        cols = st.columns(6)
-        labels = ["g1（最低）", "g2", "g3", "g4", "g5（最高）", "多空(g5-g1)"]
-        keys   = ["g1", "g2", "g3", "g4", "g5", "long_short"]
+        cols = st.columns(7)
+        labels = ["g1（最低）", "g2", "g3", "g4", "g5（最高）", "多空(g5-g1)", "单调性得分"]
+        keys   = ["g1", "g2", "g3", "g4", "g5", "long_short", None]
         for col_ui, label, key in zip(cols, labels, keys):
-            avg_val = pnl.get(f"avg_{key}")
-            if avg_val is not None:
-                col_ui.metric(label, f"{avg_val:.4%}")
+            if key is not None:
+                avg_val = pnl.get(f"avg_{key}")
+                if avg_val is not None:
+                    col_ui.metric(label, f"{avg_val:.4%}")
+            else:
+                g1, g2, g4, g5 = (pnl.get("g1"), pnl.get("g2"),
+                                   pnl.get("g4"), pnl.get("g5"))
+                if None not in (g1, g2, g4, g5) and (g2 - g4) != 0:
+                    col_ui.metric(label, f"{(g1 - g5) / (g2 - g4):.4f}")
