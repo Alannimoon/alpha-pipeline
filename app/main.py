@@ -127,6 +127,29 @@ with tab_cs:
             )
 
 
+def _show_pnl_stats(pnl: dict, title: str) -> None:
+    if not pnl:
+        return
+    st.divider()
+    st.subheader(title)
+    n_ticks = pnl.get("n_ticks")
+    if n_ticks:
+        st.caption(f"有效 tick 数：{int(n_ticks):,}")
+    cols   = st.columns(7)
+    labels = ["g1（最低）", "g2", "g3", "g4", "g5（最高）", "多空(g5-g1)", "单调性得分"]
+    keys   = ["g1", "g2", "g3", "g4", "g5", "long_short", None]
+    for col_ui, label, key in zip(cols, labels, keys):
+        if key is not None:
+            avg_val = pnl.get(f"avg_{key}")
+            if avg_val is not None:
+                col_ui.metric(label, f"{avg_val:.4%}")
+        else:
+            g1, g2, g4, g5 = (pnl.get("g1"), pnl.get("g2"),
+                               pnl.get("g4"), pnl.get("g5"))
+            if None not in (g1, g2, g4, g5) and (g2 - g4) != 0:
+                col_ui.metric(label, f"{(g1 - g5) / (g2 - g4):.4f}")
+
+
 # ── Tab 3：截面分层 ───────────────────────────────────────────────────────────
 
 with tab_quantile:
@@ -163,6 +186,9 @@ with tab_quantile:
                 st.warning("暂无预渲染图片，请先运行 cs_quantile。")
             else:
                 st.image(img_path, use_container_width=True)
+            # 全年 PnL
+            _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
+                            title="每 tick 平均收益（全周期）")
         else:
             intraday_df = load_quantile_tick_one_day(
                 q_factor, ret_horizon, _Q_SESSION, q_tick_date, q_factor_col
@@ -175,6 +201,15 @@ with tab_quantile:
                     quantile_intraday_cum_chart(intraday_df, q_tick_date),
                     use_container_width=True,
                 )
+                # 单日 PnL：从 intraday_df 最后一行算
+                last = intraday_df.iloc[-1]
+                n    = len(intraday_df)
+                day_pnl = {"n_ticks": n}
+                for c in ["g1", "g2", "g3", "g4", "g5", "long_short"]:
+                    if c in last.index and pd.notna(last[c]):
+                        day_pnl[c]           = float(last[c])
+                        day_pnl[f"avg_{c}"]  = float(last[c]) / n
+                _show_pnl_stats(day_pnl, title=f"每 tick 平均收益（{q_tick_date}）")
     else:
         daily_df = load_quantile_daily_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
         if daily_df.empty:
@@ -182,28 +217,9 @@ with tab_quantile:
         else:
             st.caption(f"共 {len(daily_df)} 个交易日，跨日累计收益。")
             st.plotly_chart(quantile_daily_cum_chart(daily_df), use_container_width=True)
-
-    # ── PnL 统计 ──────────────────────────────────────────────────────────────
-    pnl = load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
-    if pnl:
-        st.divider()
-        st.subheader("每 tick 平均收益（全周期汇总）")
-        n_ticks = pnl.get("n_ticks")
-        if n_ticks:
-            st.caption(f"总有效 tick 数：{int(n_ticks):,}")
-        cols = st.columns(7)
-        labels = ["g1（最低）", "g2", "g3", "g4", "g5（最高）", "多空(g5-g1)", "单调性得分"]
-        keys   = ["g1", "g2", "g3", "g4", "g5", "long_short", None]
-        for col_ui, label, key in zip(cols, labels, keys):
-            if key is not None:
-                avg_val = pnl.get(f"avg_{key}")
-                if avg_val is not None:
-                    col_ui.metric(label, f"{avg_val:.4%}")
-            else:
-                g1, g2, g4, g5 = (pnl.get("g1"), pnl.get("g2"),
-                                   pnl.get("g4"), pnl.get("g5"))
-                if None not in (g1, g2, g4, g5) and (g2 - g4) != 0:
-                    col_ui.metric(label, f"{(g1 - g5) / (g2 - g4):.4f}")
+        # 日频视图也显示全年 PnL
+        _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
+                        title="每 tick 平均收益（全周期）")
 
 
 # ── Tab 4：因子说明 ────────────────────────────────────────────────────────────
@@ -225,24 +241,22 @@ with tab_meta:
         if filtered.empty:
             st.info("无匹配结果。")
         else:
-            col_labels = {
-                "factor_name": "因子名",
-                "full_name": "全称",
-                "category": "类别",
-                "description": "描述",
-                "formula": "公式",
-                "windows_min": "窗口（分钟）",
-                "windows_ticks": "窗口（tick）",
-                "inputs": "输入字段",
-                "validity_conditions": "有效性条件",
-                "notes": "备注",
-            }
+            text_fields = [
+                ("description",        "描述"),
+                ("windows_min",        "窗口（分钟）"),
+                ("windows_ticks",      "窗口（tick）"),
+                ("inputs",             "输入字段"),
+                ("validity_conditions","有效性条件"),
+                ("notes",              "备注"),
+            ]
             for _, row in filtered.iterrows():
                 st.subheader(f"{row['full_name']}（{row['factor_name']}）")
                 st.caption(f"类别：{row['category']}")
-                for col, label in col_labels.items():
-                    if col in ("factor_name", "full_name", "category"):
-                        continue
+                latex = row.get("formula_latex", "")
+                if pd.notna(latex) and str(latex).strip():
+                    st.markdown("**公式**")
+                    st.latex(latex)
+                for col, label in text_fields:
                     val = row.get(col, "")
                     if pd.notna(val) and str(val).strip():
                         st.markdown(f"**{label}**")
