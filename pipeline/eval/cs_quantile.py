@@ -383,39 +383,6 @@ def _build_cum_daily(csv_dir: str) -> None:
     all_last[keep].to_csv(os.path.join(csv_dir, "_cum_daily.csv"), index=False)
 
 
-def _build_monotonicity(csv_dir: str) -> None:
-    """
-    从 _cum_daily.csv 算每天日增量，再计算单调性得分。
-
-    mono_score[d] = (g1_inc - g5_inc) / (g2_inc - g4_inc)
-    其中 gX_inc[d] = cum_gX[d] - cum_gX[d-1]（当天实际日收益）。
-    写 _monotonicity_daily.csv，列：factor_col, Date, mono_score
-    """
-    cum_path = os.path.join(csv_dir, "_cum_daily.csv")
-    if not os.path.exists(cum_path):
-        return
-
-    cum_df = pd.read_csv(cum_path, dtype={"Date": str})
-    rows = []
-    for fc, grp in cum_df.groupby("factor_col"):
-        grp = grp.sort_values("Date").reset_index(drop=True)
-        inc = grp[["g1", "g2", "g4", "g5"]].diff()  # 第0行为 NaN，跳过
-        for i in range(1, len(grp)):
-            g1, g2, g4, g5 = inc.loc[i, "g1"], inc.loc[i, "g2"], inc.loc[i, "g4"], inc.loc[i, "g5"]
-            denom = g2 - g4
-            if any(np.isnan(v) for v in (g1, g2, g4, g5)) or abs(denom) < 1e-12:
-                continue
-            rows.append({"factor_col": fc, "Date": grp.loc[i, "Date"], "mono_score": (g1 - g5) / denom})
-
-    if not rows:
-        return
-    (pd.DataFrame(rows)
-       .sort_values(["factor_col", "Date"])
-       .reset_index(drop=True)
-       .to_csv(os.path.join(csv_dir, "_monotonicity_daily.csv"), index=False))
-
-
-
 
 _GROUP_COLORS = ["#d62728", "#ff7f0e", "#8c8c8c", "#2ca02c", "#1f77b4"]
 
@@ -575,18 +542,16 @@ def run_cs_quantile(
         _build_summary(sub_dir)
         _build_cum_tick(sub_dir)
         _build_cum_daily(sub_dir)
-        _build_monotonicity(sub_dir)
         _build_cum_tick_chart(sub_dir)
 
     print(f"截面分层计算完成：{base_dir}")
 
 
 def run_cs_quantile_chart(eval_root: str, factor_name: str):
-    """重新生成跨日 tick 静态图和单调性得分，不重跑分层计算。"""
+    """重新生成跨日 tick 静态图，不重跑分层计算。"""
     base_dir = os.path.join(eval_root, "cs_quantile", factor_name)
     for h_key in _RET_HORIZONS:
         sub_dir = os.path.join(base_dir, f"{h_key}_all")
         if os.path.isdir(sub_dir):
-            _build_monotonicity(sub_dir)
             _build_cum_tick_chart(sub_dir)
     print(f"图表重新生成完成：{base_dir}")

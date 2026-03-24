@@ -178,7 +178,7 @@ with tab_quantile:
         date_options = ["全部（跨日）"] + q_dates
         q_tick_date = st.selectbox("日期", date_options, key="q_tick_date")
 
-        _mono_df = load_monotonicity_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
+        mono = load_monotonicity_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
 
         if q_tick_date == "全部（跨日）":
             img_path = quantile_tick_chart_path(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
@@ -186,7 +186,6 @@ with tab_quantile:
                 st.warning("暂无预渲染图片，请先运行 cs_quantile。")
             else:
                 st.image(img_path, use_container_width=True)
-            mono = float(_mono_df["mono_score"].mean()) if not _mono_df.empty else None
             _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
                             title="每 tick 平均收益（全周期）", mono=mono)
         else:
@@ -210,9 +209,7 @@ with tab_quantile:
                         if c in last.index and pd.notna(last[c]):
                             day_pnl[c]          = float(last[c])
                             day_pnl[f"avg_{c}"] = float(last[c]) / n if n > 0 else 0
-                day_mono_row = _mono_df[_mono_df["Date"] == q_tick_date]
-                day_mono = float(day_mono_row["mono_score"].iloc[0]) if not day_mono_row.empty else None
-                _show_pnl_stats(day_pnl, title=f"每 tick 平均收益（{q_tick_date}）", mono=day_mono)
+                _show_pnl_stats(day_pnl, title=f"每 tick 平均收益（{q_tick_date}）", mono=None)
     else:
         daily_df = load_quantile_daily_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
         if daily_df.empty:
@@ -220,8 +217,7 @@ with tab_quantile:
         else:
             st.caption(f"共 {len(daily_df)} 个交易日，跨日累计收益。")
             st.plotly_chart(quantile_daily_cum_chart(daily_df), use_container_width=True)
-        _mono_df = load_monotonicity_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
-        mono = float(_mono_df["mono_score"].mean()) if not _mono_df.empty else None
+        mono = load_monotonicity_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
         _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
                         title="每 tick 平均收益（全周期）", mono=mono)
 

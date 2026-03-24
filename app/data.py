@@ -205,21 +205,29 @@ def load_quantile_daily_cum(
 @st.cache_data
 def load_monotonicity_stats(
     factor_name: str, ret_horizon: str, session: str, factor_col: str,
-) -> pd.DataFrame:
+) -> float | None:
     """
-    读取 _monotonicity_daily.csv，返回指定 factor_col 的逐日单调性得分。
-    列：Date, mono_mean, mono_std
+    读取 _cum_daily.csv，取最后一行（全年最终累计收益），
+    用公式 (g1 - g5) / (g2 - g4) 计算全年单调性得分。
     """
     path = os.path.join(
         config.EVAL_ROOT, "cs_quantile", factor_name,
-        f"{ret_horizon}_{session}", "_monotonicity_daily.csv"
+        f"{ret_horizon}_{session}", "_cum_daily.csv"
     )
     if not os.path.exists(path):
-        return pd.DataFrame()
+        return None
     df = pd.read_csv(path, dtype={"Date": str})
-    return (df[df["factor_col"] == factor_col]
-            .drop(columns="factor_col")
-            .reset_index(drop=True))
+    sub = df[df["factor_col"] == factor_col]
+    if sub.empty:
+        return None
+    last = sub.iloc[-1]
+    g1, g2, g4, g5 = last["g1"], last["g2"], last["g4"], last["g5"]
+    if any(pd.isna(v) for v in (g1, g2, g4, g5)):
+        return None
+    denom = g2 - g4
+    if abs(denom) < 1e-12:
+        return None
+    return float((g1 - g5) / denom)
 
 
 def quantile_tick_chart_path(
