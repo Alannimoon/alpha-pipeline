@@ -53,42 +53,48 @@ _GROUP_COLORS = ["#d62728", "#ff7f0e", "#8c8c8c", "#2ca02c", "#1f77b4"]
 # g1(最低)=红, g2=橙, g3=灰, g4=绿, g5(最高)=蓝
 
 
-def quantile_bar_chart(summary_df: pd.DataFrame) -> go.Figure:
+def quantile_tick_cum_chart(tick_df: pd.DataFrame) -> go.Figure:
     """
-    截面分层柱状图：5个柱，X=组别，Y=跨所有日期和时刻的前向收益均值。
-    g1=最低因子值组，g5=最高因子值组。
+    tick 级别累计收益曲线。
+
+    X 轴：Date + SampleTime 合并为 datetime，Plotly 自动处理跨日间隔。
+    Y 轴：各组累计收益率（非重叠持仓期收益线性累加）。
+    包含 5 条组线 + 1 条多空价差线（g5 - g1）。
     """
     fig = go.Figure()
-    for i, row in summary_df.iterrows():
-        g = int(row["group"])
-        fig.add_trace(go.Bar(
-            x=[f"g{g}"],
-            y=[row["mean_ret"]],
-            name=f"g{g}",
-            marker_color=_GROUP_COLORS[g - 1],
-            showlegend=False,
+    x = pd.to_datetime(tick_df["Date"] + " " + tick_df["SampleTime"])
+    for g in range(1, 6):
+        col = f"g{g}"
+        if col in tick_df.columns:
+            fig.add_trace(go.Scatter(
+                x=x, y=tick_df[col],
+                name=f"g{g}", line=dict(color=_GROUP_COLORS[g - 1]),
+                opacity=0.7,
+            ))
+    if "long_short" in tick_df.columns:
+        fig.add_trace(go.Scatter(
+            x=x, y=tick_df["long_short"],
+            name="多空(g5-g1)", line=dict(color="black", width=2),
         ))
 
-    ls = summary_df["long_short"].iloc[0]
-    fig.add_annotation(
-        text=f"多空价差 g5-g1: {ls:.4%}",
-        xref="paper", yref="paper", x=0.98, y=0.98,
-        showarrow=False, align="right",
-        font=dict(size=12),
-    )
     fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
     fig.update_layout(
-        xaxis_title="分组（因子值由低到高）",
-        yaxis_title="前向收益均值",
+        xaxis_title="时间",
+        yaxis_title="累计收益率（非重叠）",
         yaxis_tickformat=".4%",
-        height=480, margin=dict(t=30),
+        height=560, margin=dict(t=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
 
 
-def quantile_daily_chart(daily_df: pd.DataFrame) -> go.Figure:
+def quantile_daily_cum_chart(daily_df: pd.DataFrame) -> go.Figure:
     """
-    截面分层跨日趋势：5条组线 + 多空价差线，X=日期。
+    日频累计收益曲线。
+
+    X 轴：交易日期。
+    Y 轴：截至该日的累计收益率（每日非重叠期收益之和的跨日累计）。
+    包含 5 条组线 + 1 条多空价差线（g5 - g1）。
     """
     fig = go.Figure()
     for g in range(1, 6):
@@ -108,35 +114,10 @@ def quantile_daily_chart(daily_df: pd.DataFrame) -> go.Figure:
     fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
     fig.update_layout(
         xaxis_title="Date",
-        yaxis_title="日度组均收益",
+        yaxis_title="日频累计收益率",
         yaxis_tickformat=".4%",
         height=560, margin=dict(t=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-    )
-    return fig
-
-
-def quantile_intraday_chart(intraday_df: pd.DataFrame, day: str) -> go.Figure:
-    """
-    截面分层单日日内曲线：5条组线，X=SampleTime。
-    """
-    fig = go.Figure()
-    for g in range(1, 6):
-        col = f"g{g}"
-        if col in intraday_df.columns:
-            fig.add_trace(go.Scatter(
-                x=intraday_df["SampleTime"], y=intraday_df[col],
-                name=f"g{g}", line=dict(color=_GROUP_COLORS[g - 1]),
-            ))
-
-    fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
-    fig.update_layout(
-        xaxis_title="SampleTime",
-        yaxis_title=f"组均收益  {day}",
-        yaxis_tickformat=".4%",
-        height=560, margin=dict(t=30),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis=dict(tickangle=45, nticks=20),
     )
     return fig
 

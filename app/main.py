@@ -14,14 +14,14 @@ import pandas as pd
 import streamlit as st
 
 from data import (
-    available_factors, available_cs_dates, available_quantile_dates,
+    available_factors, available_cs_dates,
     load_ic_stats, sort_factor_cols,
     load_cs_daily_trend, load_cs_one_day,
-    load_quantile_summary, load_quantile_daily, load_quantile_one_day,
+    load_quantile_tick_cum, load_quantile_daily_cum,
 )
 from charts import (
     ic_summary_chart, cs_daily_trend_chart, cs_intraday_chart,
-    quantile_bar_chart, quantile_daily_chart, quantile_intraday_chart,
+    quantile_tick_cum_chart, quantile_daily_cum_chart,
 )
 
 # ── 页面配置 ──────────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ with tab_cs:
 # ── Tab 3：截面分层 ───────────────────────────────────────────────────────────
 
 with tab_quantile:
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         q_factor = st.selectbox("因子", factors, key="q_factor")
@@ -139,43 +139,28 @@ with tab_quantile:
             st.stop()
         q_factor_cols = sort_factor_cols(q_stats["factor_col"].unique().tolist())
         q_factor_col  = st.selectbox("因子窗口", q_factor_cols, key="q_factor_col")
-    with col3:
-        q_dates = available_quantile_dates(q_factor, ret_horizon, session)
-        if not q_dates:
+
+    view_mode = st.radio(
+        "视图", ["tick 级别累计", "日频累计"], horizontal=True, key="q_view"
+    )
+
+    if view_mode == "tick 级别累计":
+        tick_df = load_quantile_tick_cum(q_factor, ret_horizon, session, q_factor_col)
+        if tick_df.empty:
             st.warning("暂无分层数据，请先运行 cs_quantile。")
-            st.stop()
-        q_date_options = ["全部（跨日趋势）"] + q_dates
-        q_date_sel = st.selectbox("日期", q_date_options, key="q_date")
-
-    # 柱状图（始终展示汇总结论）
-    summary_df = load_quantile_summary(q_factor, ret_horizon, session, q_factor_col)
-    if not summary_df.empty:
-        st.subheader("各组平均收益（全期汇总）")
-        st.plotly_chart(quantile_bar_chart(summary_df), use_container_width=True)
-    else:
-        st.warning("汇总数据为空。")
-
-    st.divider()
-
-    # 详情：跨日趋势 或 单日日内曲线
-    if q_date_sel == "全部（跨日趋势）":
-        daily_df = load_quantile_daily(q_factor, ret_horizon, session, q_factor_col)
-        if daily_df.empty:
-            st.warning("暂无数据。")
         else:
-            st.subheader("各组日度收益趋势")
-            st.caption(f"每日各时刻组均收益的日内均值，共 {len(daily_df)} 个交易日。")
-            st.plotly_chart(quantile_daily_chart(daily_df), use_container_width=True)
-    else:
-        intraday_df = load_quantile_one_day(
-            q_factor, ret_horizon, session, q_date_sel, q_factor_col
-        )
-        if intraday_df.empty:
-            st.warning("该日期暂无数据。")
-        else:
-            st.subheader(f"日内分组收益曲线  {q_date_sel}")
-            st.caption(f"共 {len(intraday_df)} 个时间点。")
-            st.plotly_chart(
-                quantile_intraday_chart(intraday_df, q_date_sel),
-                use_container_width=True,
+            n_days  = tick_df["Date"].nunique()
+            n_ticks = len(tick_df)
+            st.caption(
+                f"共 {n_days} 个交易日，{n_ticks} 个非重叠采样点（步长 = {ret_horizon.replace('ret','')} ticks）。"
             )
+            st.plotly_chart(quantile_tick_cum_chart(tick_df), use_container_width=True)
+    else:
+        daily_df = load_quantile_daily_cum(q_factor, ret_horizon, session, q_factor_col)
+        if daily_df.empty:
+            st.warning("暂无分层数据，请先运行 cs_quantile。")
+        else:
+            st.caption(
+                f"共 {len(daily_df)} 个交易日，每日收益 = 当日所有非重叠期收益之和，跨日累计。"
+            )
+            st.plotly_chart(quantile_daily_cum_chart(daily_df), use_container_width=True)
