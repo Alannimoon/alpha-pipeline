@@ -437,7 +437,12 @@ def _build_cum_tick_chart(csv_dir: str) -> None:
             continue
 
         tick_df = pd.concat(dfs, ignore_index=True)
-        x = pd.to_datetime(tick_df["Date"] + " " + tick_df["SampleTime"])
+        x = np.arange(len(tick_df))
+
+        # 每天第一个 tick 的位置 → 用于标注日期边界
+        day_starts = tick_df.groupby("Date", sort=False).apply(
+            lambda g: g.index[0] - tick_df.index[0]
+        )
 
         fig, ax = plt.subplots(figsize=(14, 5))
         for g in range(1, 6):
@@ -447,15 +452,24 @@ def _build_cum_tick_chart(csv_dir: str) -> None:
                         alpha=0.7, linewidth=0.8, label=f"g{g}")
         if "long_short" in tick_df.columns:
             ax.plot(x, tick_df["long_short"], color="black",
-                    linewidth=1.2, label="多空(g5-g1)")
+                    linewidth=1.2, label="L/S(g5-g1)")
+
+        # 每月第一个交易日画竖线 + 标注日期
+        prev_month = None
+        for date, pos in day_starts.items():
+            month = date[:6]
+            if month != prev_month:
+                ax.axvline(pos, color="gray", linewidth=0.4, linestyle="--")
+                ax.text(pos, ax.get_ylim()[0], date[4:],
+                        fontsize=6, rotation=90, va="bottom", color="gray")
+                prev_month = month
 
         ax.axhline(0, color="black", linewidth=0.6, linestyle=":")
-        ax.yaxis.set_major_formatter(
-            plt.FuncFormatter(lambda v, _: f"{v:.2%}")
-        )
-        ax.set_xlabel("时间")
-        ax.set_ylabel("累计收益率（逐tick）")
-        ax.set_title(f"{fc}  tick 级别跨日累计收益")
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.2%}"))
+        ax.set_xlabel("Tick (sequential)")
+        ax.set_ylabel("Cumulative Return (tick-level)")
+        ax.set_title(f"{fc}  Cross-Day Tick Cumulative Return")
+        ax.set_xticks([])
         ax.legend(loc="upper left", ncol=6, fontsize=8)
         fig.tight_layout()
         fig.savefig(
