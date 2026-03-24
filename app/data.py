@@ -78,8 +78,8 @@ def load_cs_daily_trend(
     )
     if not os.path.exists(path):
         return pd.DataFrame()
-    out = pd.read_csv(path)
-    out["Date"] = pd.to_datetime(out["Date"])
+    out = pd.read_csv(path, dtype={"Date": str})
+    out["Date"] = pd.to_datetime(out["Date"], format="%Y%m%d")
     return out.sort_values("Date").reset_index(drop=True)
 
 
@@ -190,8 +190,19 @@ def load_quantile_daily_cum(
         .drop(columns="factor_col")
         .reset_index(drop=True)
     )
-    out["Date"] = pd.to_datetime(out["Date"])
+    out["Date"] = pd.to_datetime(out["Date"], format="%Y%m%d")
     return out
+
+
+def quantile_tick_chart_path(
+    factor_name: str, ret_horizon: str, session: str, factor_col: str,
+) -> str | None:
+    """返回预渲染的跨日 tick 图片路径，不存在时返回 None。"""
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", f"_chart_tick_{factor_col}.png"
+    )
+    return path if os.path.exists(path) else None
 
 
 @st.cache_data

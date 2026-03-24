@@ -37,6 +37,9 @@ import os
 import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -380,6 +383,88 @@ def _build_cum_daily(csv_dir: str) -> None:
     all_last[keep].to_csv(os.path.join(csv_dir, "_cum_daily.csv"), index=False)
 
 
+_GROUP_COLORS = ["#d62728", "#ff7f0e", "#8c8c8c", "#2ca02c", "#1f77b4"]
+
+
+def _build_cum_tick_chart(csv_dir: str) -> None:
+    """
+    读取所有 _cum_tick_{date}.csv，拼成跨日连续曲线，
+    对每个 factor_col 画图并保存为 _chart_tick_{factor_col}.png。
+    """
+    tick_files = sorted(glob.glob(os.path.join(csv_dir, "_cum_tick_*.csv")))
+    if not tick_files:
+        return
+
+    daily_path = os.path.join(csv_dir, "_cum_daily.csv")
+    if not os.path.exists(daily_path):
+        return
+    daily_df = pd.read_csv(daily_path, dtype={"Date": str})
+
+    # 获取所有 factor_col
+    fc_list = daily_df["factor_col"].unique().tolist()
+    g_cols  = [f"g{g}" for g in range(1, 6)]
+
+    chart_iter = tqdm(fc_list, desc="cum_tick_chart") if tqdm else fc_list
+    for fc in chart_iter:
+        daily_fc = (
+            daily_df[daily_df["factor_col"] == fc]
+            .set_index("Date")
+            .drop(columns="factor_col")
+        )
+        all_cols = [c for c in g_cols + ["long_short"] if c in daily_fc.columns]
+
+        # 拼跨日 tick 数据（同 load_quantile_tick_cum 逻辑）
+        dfs = []
+        prev_date = None
+        for f in tick_files:
+            m = re.search(r"_cum_tick_(\d+)\.csv$", os.path.basename(f))
+            if not m:
+                continue
+            day = m.group(1)
+            df  = pd.read_csv(f, dtype={"SampleTime": str})
+            df  = df[df["factor_col"] == fc].drop(columns="factor_col").copy()
+            if df.empty:
+                prev_date = day
+                continue
+            if prev_date is not None and prev_date in daily_fc.index:
+                offset = daily_fc.loc[prev_date, all_cols]
+                df[all_cols] = df[all_cols] + offset.values
+            df.insert(0, "Date", day)
+            dfs.append(df)
+            prev_date = day
+
+        if not dfs:
+            continue
+
+        tick_df = pd.concat(dfs, ignore_index=True)
+        x = pd.to_datetime(tick_df["Date"] + " " + tick_df["SampleTime"])
+
+        fig, ax = plt.subplots(figsize=(14, 5))
+        for g in range(1, 6):
+            col = f"g{g}"
+            if col in tick_df.columns:
+                ax.plot(x, tick_df[col], color=_GROUP_COLORS[g - 1],
+                        alpha=0.7, linewidth=0.8, label=f"g{g}")
+        if "long_short" in tick_df.columns:
+            ax.plot(x, tick_df["long_short"], color="black",
+                    linewidth=1.2, label="多空(g5-g1)")
+
+        ax.axhline(0, color="black", linewidth=0.6, linestyle=":")
+        ax.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda v, _: f"{v:.2%}")
+        )
+        ax.set_xlabel("时间")
+        ax.set_ylabel("累计收益率（逐tick）")
+        ax.set_title(f"{fc}  tick 级别跨日累计收益")
+        ax.legend(loc="upper left", ncol=6, fontsize=8)
+        fig.tight_layout()
+        fig.savefig(
+            os.path.join(csv_dir, f"_chart_tick_{fc}.png"),
+            dpi=150, bbox_inches="tight",
+        )
+        plt.close(fig)
+
+
 # ── 批量入口 ──────────────────────────────────────────────────────────────────
 
 def _worker(args) -> str:
@@ -440,5 +525,6 @@ def run_cs_quantile(
         _build_summary(sub_dir)
         _build_cum_tick(sub_dir)
         _build_cum_daily(sub_dir)
+        _build_cum_tick_chart(sub_dir)
 
     print(f"截面分层计算完成：{base_dir}")

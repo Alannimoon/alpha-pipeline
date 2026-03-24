@@ -18,7 +18,7 @@ from data import (
     load_ic_stats, sort_factor_cols,
     load_cs_daily_trend, load_cs_one_day,
     load_quantile_tick_cum, load_quantile_tick_one_day, load_quantile_daily_cum,
-    load_quantile_pnl_stats,
+    load_quantile_pnl_stats, quantile_tick_chart_path,
 )
 from charts import (
     ic_summary_chart, cs_daily_trend_chart, cs_intraday_chart,
@@ -153,18 +153,27 @@ with tab_quantile:
         if not q_dates:
             st.warning("暂无分层数据，请先运行 cs_quantile。")
             st.stop()
-        q_tick_date = st.selectbox("日期", q_dates, key="q_tick_date")
-        intraday_df = load_quantile_tick_one_day(
-            q_factor, ret_horizon, _Q_SESSION, q_tick_date, q_factor_col
-        )
-        if intraday_df.empty:
-            st.warning("该日期暂无数据。")
+        date_options = ["全部（跨日）"] + q_dates
+        q_tick_date = st.selectbox("日期", date_options, key="q_tick_date")
+
+        if q_tick_date == "全部（跨日）":
+            img_path = quantile_tick_chart_path(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
+            if img_path is None:
+                st.warning("暂无预渲染图片，请先运行 cs_quantile。")
+            else:
+                st.image(img_path, use_container_width=True)
         else:
-            st.caption(f"{q_tick_date} 日内累计，{len(intraday_df)} 个 tick（上午+下午）。")
-            st.plotly_chart(
-                quantile_intraday_cum_chart(intraday_df, q_tick_date),
-                use_container_width=True,
+            intraday_df = load_quantile_tick_one_day(
+                q_factor, ret_horizon, _Q_SESSION, q_tick_date, q_factor_col
             )
+            if intraday_df.empty:
+                st.warning("该日期暂无数据。")
+            else:
+                st.caption(f"{q_tick_date} 日内累计，{len(intraday_df)} 个 tick（上午+下午）。")
+                st.plotly_chart(
+                    quantile_intraday_cum_chart(intraday_df, q_tick_date),
+                    use_container_width=True,
+                )
     else:
         daily_df = load_quantile_daily_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
         if daily_df.empty:
