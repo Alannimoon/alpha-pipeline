@@ -13,6 +13,14 @@ import streamlit as st
 import config
 
 
+def load_factor_meta() -> pd.DataFrame:
+    """读取因子元数据说明表。"""
+    path = os.path.join(os.path.dirname(config.__file__), "factor_meta.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+
 def available_factors() -> list[str]:
     """返回已有 ic_stats 结果的因子列表。"""
     stats_dir = os.path.join(config.EVAL_ROOT, "ic_stats")

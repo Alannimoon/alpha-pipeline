@@ -19,6 +19,7 @@ from data import (
     load_cs_daily_trend, load_cs_one_day,
     load_quantile_tick_cum, load_quantile_tick_one_day, load_quantile_daily_cum,
     load_quantile_pnl_stats, quantile_tick_chart_path,
+    load_factor_meta,
 )
 from charts import (
     ic_summary_chart, cs_daily_trend_chart, cs_intraday_chart,
@@ -44,7 +45,7 @@ session     = st.sidebar.selectbox("Session", ["all", "am", "pm"])
 
 # ── Tab 布局 ──────────────────────────────────────────────────────────────────
 
-tab_summary, tab_cs, tab_quantile = st.tabs(["📊 IC 汇总", "📈 截面详情", "📉 截面分层"])
+tab_summary, tab_cs, tab_quantile, tab_meta = st.tabs(["📊 IC 汇总", "📈 截面详情", "📉 截面分层", "📖 因子说明"])
 
 
 # ── Tab 1：IC 汇总 ────────────────────────────────────────────────────────────
@@ -203,3 +204,47 @@ with tab_quantile:
                                    pnl.get("g4"), pnl.get("g5"))
                 if None not in (g1, g2, g4, g5) and (g2 - g4) != 0:
                     col_ui.metric(label, f"{(g1 - g5) / (g2 - g4):.4f}")
+
+
+# ── Tab 4：因子说明 ────────────────────────────────────────────────────────────
+
+with tab_meta:
+    meta_df = load_factor_meta()
+    if meta_df.empty:
+        st.warning("暂无因子说明，请检查 config/factor_meta.csv。")
+    else:
+        search = st.text_input("搜索因子（名称 / 类别 / 关键词）", placeholder="输入关键词过滤…")
+        if search:
+            mask = meta_df.apply(
+                lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1
+            )
+            filtered = meta_df[mask]
+        else:
+            filtered = meta_df
+
+        if filtered.empty:
+            st.info("无匹配结果。")
+        else:
+            col_labels = {
+                "factor_name": "因子名",
+                "full_name": "全称",
+                "category": "类别",
+                "description": "描述",
+                "formula": "公式",
+                "windows_min": "窗口（分钟）",
+                "windows_ticks": "窗口（tick）",
+                "inputs": "输入字段",
+                "validity_conditions": "有效性条件",
+                "notes": "备注",
+            }
+            for _, row in filtered.iterrows():
+                st.subheader(f"{row['full_name']}（{row['factor_name']}）")
+                st.caption(f"类别：{row['category']}")
+                for col, label in col_labels.items():
+                    if col in ("factor_name", "full_name", "category"):
+                        continue
+                    val = row.get(col, "")
+                    if pd.notna(val) and str(val).strip():
+                        st.markdown(f"**{label}**")
+                        st.text(val)
+                st.divider()
