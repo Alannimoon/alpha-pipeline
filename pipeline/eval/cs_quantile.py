@@ -415,16 +415,14 @@ def _build_monotonicity(csv_dir: str) -> None:
             g5 = df.get(f"g5_{fc}")
             if any(x is None for x in (g1, g2, g4, g5)):
                 continue
-            denom  = g2 - g4
-            valid  = denom.abs() > 1e-12
-            scores = ((g1 - g5) / denom)[valid].dropna()
-            if scores.empty:
+            m1, m2, m4, m5 = g1.mean(), g2.mean(), g4.mean(), g5.mean()
+            denom = m2 - m4
+            if abs(denom) < 1e-12 or any(np.isnan(v) for v in (m1, m2, m4, m5)):
                 continue
             rows.append({
                 "factor_col": fc,
                 "Date":       day,
-                "mono_mean":  scores.mean(),
-                "mono_std":   scores.std(),
+                "mono_score": (m1 - m5) / denom,
             })
 
     if not rows:
@@ -433,6 +431,7 @@ def _build_monotonicity(csv_dir: str) -> None:
        .sort_values(["factor_col", "Date"])
        .reset_index(drop=True)
        .to_csv(os.path.join(csv_dir, "_monotonicity_daily.csv"), index=False))
+
 
 
 _GROUP_COLORS = ["#d62728", "#ff7f0e", "#8c8c8c", "#2ca02c", "#1f77b4"]

@@ -186,7 +186,7 @@ with tab_quantile:
                 st.warning("暂无预渲染图片，请先运行 cs_quantile。")
             else:
                 st.image(img_path, use_container_width=True)
-            mono = float(_mono_df["mono_mean"].mean()) if not _mono_df.empty else None
+            mono = float(_mono_df["mono_score"].mean()) if not _mono_df.empty else None
             _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
                             title="每 tick 平均收益（全周期）", mono=mono)
         else:
@@ -211,7 +211,7 @@ with tab_quantile:
                             day_pnl[c]          = float(last[c])
                             day_pnl[f"avg_{c}"] = float(last[c]) / n if n > 0 else 0
                 day_mono_row = _mono_df[_mono_df["Date"] == q_tick_date]
-                day_mono = float(day_mono_row["mono_mean"].iloc[0]) if not day_mono_row.empty else None
+                day_mono = float(day_mono_row["mono_score"].iloc[0]) if not day_mono_row.empty else None
                 _show_pnl_stats(day_pnl, title=f"每 tick 平均收益（{q_tick_date}）", mono=day_mono)
     else:
         daily_df = load_quantile_daily_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
@@ -221,7 +221,7 @@ with tab_quantile:
             st.caption(f"共 {len(daily_df)} 个交易日，跨日累计收益。")
             st.plotly_chart(quantile_daily_cum_chart(daily_df), use_container_width=True)
         _mono_df = load_monotonicity_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
-        mono = float(_mono_df["mono_mean"].mean()) if not _mono_df.empty else None
+        mono = float(_mono_df["mono_score"].mean()) if not _mono_df.empty else None
         _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
                         title="每 tick 平均收益（全周期）", mono=mono)
 
