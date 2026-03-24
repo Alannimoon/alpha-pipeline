@@ -276,11 +276,13 @@ def _build_summary(csv_dir: str) -> None:
 
 def _build_cum_tick(csv_dir: str) -> None:
     """
-    读取目录下所有日期文件，全量 tick（不抽样），对每个 factor_col 跨日
-    连续 cumsum()，写入 _cum_tick.csv。
+    流式逐日计算日内累计收益，每天写一个 _cum_tick_{date}.csv。
 
-    列：factor_col, Date, SampleTime, g1, g2, g3, g4, g5, long_short
-    g1~g5 为累计收益率（线性累加，无复利）。
+    每个文件存该日日内从 0 开始的 cumsum（不跨日），
+    列：factor_col, SampleTime, g1, g2, g3, g4, g5, long_short。
+
+    跨日累计由前端读取时叠加 _cum_daily.csv 的 offset 完成，
+    无需在此构建大型中间文件。
     """
     files = sorted(
         f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
@@ -289,63 +291,83 @@ def _build_cum_tick(csv_dir: str) -> None:
     if not files:
         return
 
-    dfs = []
-    for f in files:
-        df = pd.read_csv(f, dtype={"SampleTime": str})
-        dfs.append(df)
-
-    all_df = pd.concat(dfs, ignore_index=True)
-
-    # 从列名 g{n}_{fc} 中提取所有 factor_col（排除 n_valid_ 前缀）
-    fc_seen: set[str] = set()
-    for col in all_df.columns:
-        m = re.match(r"g\d+_(.*)", col)
-        if m:
-            fc_seen.add(m.group(1))
-
-    parts = []
-    for fc in sorted(fc_seen):
-        src_cols = {g: f"g{g}_{fc}" for g in range(1, 6)}
-        present  = {g: src for g, src in src_cols.items() if src in all_df.columns}
-        if not present:
-            continue
-
-        sub = all_df[["Date", "SampleTime"] + list(present.values())].copy()
-        sub = sub.rename(columns={v: f"g{g}" for g, v in present.items()})
-
-        g_cols = [f"g{g}" for g in range(1, 6) if f"g{g}" in sub.columns]
-        sub[g_cols] = sub[g_cols].cumsum()
-        sub["long_short"] = sub["g5"] - sub["g1"]
-        sub.insert(0, "factor_col", fc)
-        parts.append(sub)
-
-    if not parts:
+    # 从第一个文件提取 factor_col 列表
+    first_cols = pd.read_csv(files[0], nrows=0).columns.tolist()
+    fc_list = sorted({
+        m.group(1)
+        for col in first_cols
+        if (m := re.match(r"g\d+_(.*)", col))
+    })
+    if not fc_list:
         return
 
-    pd.concat(parts, ignore_index=True).to_csv(
-        os.path.join(csv_dir, "_cum_tick.csv"), index=False
-    )
+    for f in files:
+        day = os.path.splitext(os.path.basename(f))[0]
+        df  = pd.read_csv(f, dtype={"SampleTime": str})
+
+        parts = []
+        for fc in fc_list:
+            present = {
+                g: s for g in range(1, 6)
+                if (s := f"g{g}_{fc}") in df.columns
+            }
+            if not present:
+                continue
+
+            sub = df[["SampleTime"] + list(present.values())].copy()
+            sub = sub.rename(columns={v: f"g{g}" for g, v in present.items()})
+
+            g_cols = [f"g{g}" for g in range(1, 6) if f"g{g}" in sub.columns]
+            sub[g_cols] = sub[g_cols].cumsum()
+            sub["long_short"] = sub["g5"] - sub["g1"]
+            sub.insert(0, "factor_col", fc)
+            parts.append(sub)
+
+        if parts:
+            pd.concat(parts, ignore_index=True).to_csv(
+                os.path.join(csv_dir, f"_cum_tick_{day}.csv"), index=False
+            )
 
 
 def _build_cum_daily(csv_dir: str) -> None:
     """
-    从 _cum_tick.csv 中取每个 (factor_col, Date) 的最后一行，
-    即截至当日收盘的累计值，写入 _cum_daily.csv。
+    读取所有 _cum_tick_{date}.csv，取每个 (factor_col, date) 的最后一行
+    （= 当日日内累计总收益），跨日 cumsum 后写入 _cum_daily.csv。
 
     列：factor_col, Date, g1, g2, g3, g4, g5, long_short
     """
-    path = os.path.join(csv_dir, "_cum_tick.csv")
-    if not os.path.exists(path):
+    files = sorted(glob.glob(os.path.join(csv_dir, "_cum_tick_*.csv")))
+    if not files:
         return
 
-    df = pd.read_csv(path, dtype={"Date": str, "SampleTime": str})
-    g_keep = [c for c in ["g1", "g2", "g3", "g4", "g5", "long_short"] if c in df.columns]
-    daily = (
-        df.groupby(["factor_col", "Date"])[g_keep]
-        .last()
-        .reset_index()
+    rows = []
+    for f in files:
+        m = re.search(r"_cum_tick_(\d+)\.csv$", os.path.basename(f))
+        if not m:
+            continue
+        day = m.group(1)
+        df  = pd.read_csv(f, dtype={"SampleTime": str})
+        # 每个 factor_col 的最后一行 = 当日日内总收益
+        last = df.groupby("factor_col").last().reset_index()
+        last.insert(1, "Date", day)
+        rows.append(last)
+
+    if not rows:
+        return
+
+    all_last = (
+        pd.concat(rows, ignore_index=True)
+        .sort_values(["factor_col", "Date"])
+        .reset_index(drop=True)
     )
-    daily.to_csv(os.path.join(csv_dir, "_cum_daily.csv"), index=False)
+    g_cols = [f"g{g}" for g in range(1, 6) if f"g{g}" in all_last.columns]
+
+    # 对每个 factor_col 独立跨日 cumsum
+    all_last[g_cols] = all_last.groupby("factor_col")[g_cols].cumsum()
+    all_last["long_short"] = all_last["g5"] - all_last["g1"]
+
+    keep = ["factor_col", "Date"] + g_cols + ["long_short"]
+    all_last[keep].to_csv(os.path.join(csv_dir, "_cum_daily.csv"), index=False)
 
 
 # ── 批量入口 ──────────────────────────────────────────────────────────────────

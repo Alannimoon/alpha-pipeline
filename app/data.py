@@ -100,32 +100,24 @@ def load_quantile_tick_one_day(
     factor_name: str, ret_horizon: str, session: str, day: str, factor_col: str,
 ) -> pd.DataFrame:
     """
-    单日 tick 级别累计收益（实时计算，数据量小无需预计算）。
+    单日 tick 级别累计收益，读取预计算的 _cum_tick_{day}.csv。
 
-    读取指定日期的原始文件，全量 tick（不抽样），在日内做 cumsum()，
-    每天从 0 开始，不跨日。
-
+    值为日内从 0 开始的累计收益（不含跨日偏移），纯文件读取。
     返回列：SampleTime, g1, g2, g3, g4, g5, long_short
     """
     path = os.path.join(
         config.EVAL_ROOT, "cs_quantile", factor_name,
-        f"{ret_horizon}_{session}", f"{day}.csv"
+        f"{ret_horizon}_{session}", f"_cum_tick_{day}.csv"
     )
     if not os.path.exists(path):
         return pd.DataFrame()
 
-    g_cols_raw = [f"g{g}_{factor_col}" for g in range(1, 6)]
     df = pd.read_csv(path, dtype={"SampleTime": str})
-    cols_present = [c for c in g_cols_raw if c in df.columns]
-    if not cols_present:
-        return pd.DataFrame()
-
-    out = df[["SampleTime"] + cols_present].copy()
-    out = out.rename(columns={f"g{g}_{factor_col}": f"g{g}" for g in range(1, 6)})
-    g_cols = [c for c in ["g1", "g2", "g3", "g4", "g5"] if c in out.columns]
-    out[g_cols] = out[g_cols].cumsum()
-    out["long_short"] = out["g5"] - out["g1"]
-    return out.reset_index(drop=True)
+    return (
+        df[df["factor_col"] == factor_col]
+        .drop(columns="factor_col")
+        .reset_index(drop=True)
+    )
 
 
 @st.cache_data
@@ -133,23 +125,59 @@ def load_quantile_tick_cum(
     factor_name: str, ret_horizon: str, session: str, factor_col: str,
 ) -> pd.DataFrame:
     """
-    tick 级别跨日累计收益，读取预计算的 _cum_tick.csv。
+    tick 级别跨日累计收益。
+
+    读取所有 _cum_tick_{date}.csv（日内累计，从 0 开始），
+    叠加 _cum_daily.csv 中前一天的结束值作为跨日 offset，
+    拼接后得到连续跨日累计曲线。
 
     返回列：Date, SampleTime, g1, g2, g3, g4, g5, long_short
     """
-    path = os.path.join(
-        config.EVAL_ROOT, "cs_quantile", factor_name,
-        f"{ret_horizon}_{session}", "_cum_tick.csv"
+    csv_dir = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
     )
-    if not os.path.exists(path):
+    tick_files = sorted(glob.glob(os.path.join(csv_dir, "_cum_tick_*.csv")))
+    if not tick_files:
         return pd.DataFrame()
 
-    df = pd.read_csv(path, dtype={"Date": str, "SampleTime": str})
-    return (
-        df[df["factor_col"] == factor_col]
+    # 读 _cum_daily.csv 获取每天结束时的跨日累计值（用于计算 offset）
+    daily_path = os.path.join(csv_dir, "_cum_daily.csv")
+    if not os.path.exists(daily_path):
+        return pd.DataFrame()
+    daily_df = pd.read_csv(daily_path, dtype={"Date": str})
+    daily_fc = (
+        daily_df[daily_df["factor_col"] == factor_col]
+        .set_index("Date")
         .drop(columns="factor_col")
-        .reset_index(drop=True)
     )
+    g_cols = [c for c in ["g1", "g2", "g3", "g4", "g5", "long_short"]
+              if c in daily_fc.columns]
+
+    dfs = []
+    prev_date = None
+    for f in tick_files:
+        m = re.search(r"_cum_tick_(\d+)\.csv$", os.path.basename(f))
+        if not m:
+            continue
+        day = m.group(1)
+        df  = pd.read_csv(f, dtype={"SampleTime": str})
+        df  = df[df["factor_col"] == factor_col].drop(columns="factor_col").copy()
+        if df.empty:
+            prev_date = day
+            continue
+
+        # 叠加前一天结束时的累计值作为 offset
+        if prev_date is not None and prev_date in daily_fc.index:
+            offset = daily_fc.loc[prev_date, g_cols]
+            df[g_cols] = df[g_cols] + offset.values
+
+        df.insert(0, "Date", day)
+        dfs.append(df)
+        prev_date = day
+
+    if not dfs:
+        return pd.DataFrame()
+    return pd.concat(dfs, ignore_index=True)
 
 
 @st.cache_data
