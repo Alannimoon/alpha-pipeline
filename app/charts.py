@@ -88,6 +88,41 @@ def quantile_tick_cum_chart(tick_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def quantile_intraday_cum_chart(intraday_df: pd.DataFrame, day: str) -> go.Figure:
+    """
+    单日 tick 级别累计收益曲线。
+
+    X 轴：SampleTime（日内时间，非重叠采样点）。
+    Y 轴：从该日第一个采样点起的累计收益率。
+    包含 5 条组线 + 1 条多空价差线（g5 - g1）。
+    """
+    fig = go.Figure()
+    for g in range(1, 6):
+        col = f"g{g}"
+        if col in intraday_df.columns:
+            fig.add_trace(go.Scatter(
+                x=intraday_df["SampleTime"], y=intraday_df[col],
+                name=f"g{g}", line=dict(color=_GROUP_COLORS[g - 1]),
+                opacity=0.7,
+            ))
+    if "long_short" in intraday_df.columns:
+        fig.add_trace(go.Scatter(
+            x=intraday_df["SampleTime"], y=intraday_df["long_short"],
+            name="多空(g5-g1)", line=dict(color="black", width=2),
+        ))
+
+    fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
+    fig.update_layout(
+        xaxis_title="SampleTime",
+        yaxis_title=f"日内累计收益率  {day}",
+        yaxis_tickformat=".4%",
+        height=560, margin=dict(t=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(tickangle=45, nticks=20),
+    )
+    return fig
+
+
 def quantile_daily_cum_chart(daily_df: pd.DataFrame) -> go.Figure:
     """
     日频累计收益曲线。

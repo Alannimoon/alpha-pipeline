@@ -14,14 +14,14 @@ import pandas as pd
 import streamlit as st
 
 from data import (
-    available_factors, available_cs_dates,
+    available_factors, available_cs_dates, available_quantile_dates,
     load_ic_stats, sort_factor_cols,
     load_cs_daily_trend, load_cs_one_day,
-    load_quantile_tick_cum, load_quantile_daily_cum,
+    load_quantile_tick_cum, load_quantile_tick_one_day, load_quantile_daily_cum,
 )
 from charts import (
     ic_summary_chart, cs_daily_trend_chart, cs_intraday_chart,
-    quantile_tick_cum_chart, quantile_daily_cum_chart,
+    quantile_tick_cum_chart, quantile_intraday_cum_chart, quantile_daily_cum_chart,
 )
 
 # ── 页面配置 ──────────────────────────────────────────────────────────────────
@@ -145,16 +145,40 @@ with tab_quantile:
     )
 
     if view_mode == "tick 级别累计":
-        tick_df = load_quantile_tick_cum(q_factor, ret_horizon, session, q_factor_col)
-        if tick_df.empty:
+        q_dates = available_quantile_dates(q_factor, ret_horizon, session)
+        if not q_dates:
             st.warning("暂无分层数据，请先运行 cs_quantile。")
+            st.stop()
+        date_options = ["全部（跨日）"] + q_dates
+        q_tick_date = st.selectbox("日期", date_options, key="q_tick_date")
+
+        if q_tick_date == "全部（跨日）":
+            tick_df = load_quantile_tick_cum(q_factor, ret_horizon, session, q_factor_col)
+            if tick_df.empty:
+                st.warning("暂无数据。")
+            else:
+                n_days  = tick_df["Date"].nunique()
+                n_ticks = len(tick_df)
+                st.caption(
+                    f"共 {n_days} 个交易日，{n_ticks} 个非重叠采样点"
+                    f"（步长 = {ret_horizon.replace('ret', '')} ticks）。"
+                )
+                st.plotly_chart(quantile_tick_cum_chart(tick_df), use_container_width=True)
         else:
-            n_days  = tick_df["Date"].nunique()
-            n_ticks = len(tick_df)
-            st.caption(
-                f"共 {n_days} 个交易日，{n_ticks} 个非重叠采样点（步长 = {ret_horizon.replace('ret','')} ticks）。"
+            intraday_df = load_quantile_tick_one_day(
+                q_factor, ret_horizon, session, q_tick_date, q_factor_col
             )
-            st.plotly_chart(quantile_tick_cum_chart(tick_df), use_container_width=True)
+            if intraday_df.empty:
+                st.warning("该日期暂无数据。")
+            else:
+                step = ret_horizon.replace("ret", "")
+                st.caption(
+                    f"{q_tick_date} 日内累计，{len(intraday_df)} 个非重叠采样点（步长 = {step} ticks）。"
+                )
+                st.plotly_chart(
+                    quantile_intraday_cum_chart(intraday_df, q_tick_date),
+                    use_container_width=True,
+                )
     else:
         daily_df = load_quantile_daily_cum(q_factor, ret_horizon, session, q_factor_col)
         if daily_df.empty:

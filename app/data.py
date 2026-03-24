@@ -37,6 +37,18 @@ def _horizon_step(ret_horizon: str) -> int:
     return int(ret_horizon.replace("ret", ""))
 
 
+def available_quantile_dates(factor_name: str, ret_horizon: str, session: str) -> list[str]:
+    """返回 cs_quantile 目录下所有可用日期。"""
+    csv_dir = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
+    )
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    return [os.path.splitext(os.path.basename(f))[0] for f in files]
+
+
 def available_cs_dates(factor_name: str, ret_horizon: str, session: str) -> list[str]:
     """返回 cs_ic 目录下所有可用日期（字符串列表，如 ['20250102', ...]）。"""
     csv_dir = os.path.join(
@@ -130,6 +142,40 @@ def _load_quantile_raw_nonolap(
     combined = pd.concat(dfs, ignore_index=True)
     combined = combined.rename(columns={f"g{g}_{factor_col}": f"g{g}" for g in range(1, 6)})
     return combined  # 列：Date, SampleTime, g1, g2, g3, g4, g5
+
+
+@st.cache_data
+def load_quantile_tick_one_day(
+    factor_name: str, ret_horizon: str, session: str, day: str, factor_col: str,
+) -> pd.DataFrame:
+    """
+    单日 tick 级别累计收益。
+
+    读取指定日期文件，非重叠采样后在日内做 cumsum()（从 0 开始，不跨日）。
+    返回列：SampleTime, g1, g2, g3, g4, g5, long_short
+    """
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", f"{day}.csv"
+    )
+    if not os.path.exists(path):
+        return pd.DataFrame()
+
+    step = _horizon_step(ret_horizon)
+    g_cols_raw = [f"g{g}_{factor_col}" for g in range(1, 6)]
+
+    df = pd.read_csv(path, dtype={"SampleTime": str})
+    cols_present = [c for c in g_cols_raw if c in df.columns]
+    if not cols_present:
+        return pd.DataFrame()
+
+    df_sub = df[["SampleTime"] + cols_present].iloc[::step].copy()
+    df_sub = df_sub.rename(columns={f"g{g}_{factor_col}": f"g{g}" for g in range(1, 6)})
+
+    g_cols = [c for c in ["g1", "g2", "g3", "g4", "g5"] if c in df_sub.columns]
+    df_sub[g_cols] = df_sub[g_cols].cumsum()
+    df_sub["long_short"] = df_sub["g5"] - df_sub["g1"]
+    return df_sub.reset_index(drop=True)
 
 
 @st.cache_data
