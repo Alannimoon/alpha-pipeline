@@ -413,7 +413,8 @@ def run_cs_quantile(
             sub_dir = os.path.join(base_dir, f"{h_key}_{sess}")
             _build_daily(sub_dir)
             _build_summary(sub_dir)
-            _build_cum_tick(sub_dir)
-            _build_cum_daily(sub_dir)
+        # 累计收益只对全天计算（am/pm 是 all 的子集，分半天跨日无意义）
+        _build_cum_tick(os.path.join(base_dir, f"{h_key}_all"))
+        _build_cum_daily(os.path.join(base_dir, f"{h_key}_all"))
 
     print(f"截面分层计算完成：{base_dir}")

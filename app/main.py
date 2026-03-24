@@ -144,8 +144,11 @@ with tab_quantile:
         "视图", ["tick 级别累计", "日频累计"], horizontal=True, key="q_view"
     )
 
+    # 截面分层始终使用全天数据（am/pm 是 all 的子集，跨日分半天无意义）
+    _Q_SESSION = "all"
+
     if view_mode == "tick 级别累计":
-        q_dates = available_quantile_dates(q_factor, ret_horizon, session)
+        q_dates = available_quantile_dates(q_factor, ret_horizon, _Q_SESSION)
         if not q_dates:
             st.warning("暂无分层数据，请先运行 cs_quantile。")
             st.stop()
@@ -153,38 +156,30 @@ with tab_quantile:
         q_tick_date = st.selectbox("日期", date_options, key="q_tick_date")
 
         if q_tick_date == "全部（跨日）":
-            tick_df = load_quantile_tick_cum(q_factor, ret_horizon, session, q_factor_col)
+            tick_df = load_quantile_tick_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
             if tick_df.empty:
                 st.warning("暂无数据。")
             else:
                 n_days  = tick_df["Date"].nunique()
                 n_ticks = len(tick_df)
-                st.caption(
-                    f"共 {n_days} 个交易日，{n_ticks} 个非重叠采样点"
-                    f"（步长 = {ret_horizon.replace('ret', '')} ticks）。"
-                )
+                st.caption(f"共 {n_days} 个交易日，{n_ticks} 个 tick。")
                 st.plotly_chart(quantile_tick_cum_chart(tick_df), use_container_width=True)
         else:
             intraday_df = load_quantile_tick_one_day(
-                q_factor, ret_horizon, session, q_tick_date, q_factor_col
+                q_factor, ret_horizon, _Q_SESSION, q_tick_date, q_factor_col
             )
             if intraday_df.empty:
                 st.warning("该日期暂无数据。")
             else:
-                step = ret_horizon.replace("ret", "")
-                st.caption(
-                    f"{q_tick_date} 日内累计，{len(intraday_df)} 个非重叠采样点（步长 = {step} ticks）。"
-                )
+                st.caption(f"{q_tick_date} 日内累计，{len(intraday_df)} 个 tick（上午+下午）。")
                 st.plotly_chart(
                     quantile_intraday_cum_chart(intraday_df, q_tick_date),
                     use_container_width=True,
                 )
     else:
-        daily_df = load_quantile_daily_cum(q_factor, ret_horizon, session, q_factor_col)
+        daily_df = load_quantile_daily_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
         if daily_df.empty:
             st.warning("暂无分层数据，请先运行 cs_quantile。")
         else:
-            st.caption(
-                f"共 {len(daily_df)} 个交易日，每日收益 = 当日所有非重叠期收益之和，跨日累计。"
-            )
+            st.caption(f"共 {len(daily_df)} 个交易日，跨日累计收益。")
             st.plotly_chart(quantile_daily_cum_chart(daily_df), use_container_width=True)
