@@ -278,6 +278,82 @@ def _build_summary(csv_dir: str) -> None:
     summary.to_csv(os.path.join(csv_dir, "_summary.csv"), index=False)
 
 
+# ── 累计收益预计算 ─────────────────────────────────────────────────────────────
+
+def _build_cum_tick(csv_dir: str) -> None:
+    """
+    读取目录下所有日期文件，全量 tick（不抽样），对每个 factor_col 跨日
+    连续 cumsum()，写入 _cum_tick.csv。
+
+    列：factor_col, Date, SampleTime, g1, g2, g3, g4, g5, long_short
+    g1~g5 为累计收益率（线性累加，无复利）。
+    """
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    if not files:
+        return
+
+    dfs = []
+    for f in files:
+        df = pd.read_csv(f, dtype={"SampleTime": str})
+        dfs.append(df)
+
+    all_df = pd.concat(dfs, ignore_index=True)
+
+    # 从列名 g{n}_{fc} 中提取所有 factor_col（排除 n_valid_ 前缀）
+    fc_seen: set[str] = set()
+    for col in all_df.columns:
+        m = re.match(r"g\d+_(.*)", col)
+        if m:
+            fc_seen.add(m.group(1))
+
+    parts = []
+    for fc in sorted(fc_seen):
+        src_cols = {g: f"g{g}_{fc}" for g in range(1, 6)}
+        present  = {g: src for g, src in src_cols.items() if src in all_df.columns}
+        if not present:
+            continue
+
+        sub = all_df[["Date", "SampleTime"] + list(present.values())].copy()
+        sub = sub.rename(columns={v: f"g{g}" for g, v in present.items()})
+
+        g_cols = [f"g{g}" for g in range(1, 6) if f"g{g}" in sub.columns]
+        sub[g_cols] = sub[g_cols].cumsum()
+        sub["long_short"] = sub["g5"] - sub["g1"]
+        sub.insert(0, "factor_col", fc)
+        parts.append(sub)
+
+    if not parts:
+        return
+
+    pd.concat(parts, ignore_index=True).to_csv(
+        os.path.join(csv_dir, "_cum_tick.csv"), index=False
+    )
+
+
+def _build_cum_daily(csv_dir: str) -> None:
+    """
+    从 _cum_tick.csv 中取每个 (factor_col, Date) 的最后一行，
+    即截至当日收盘的累计值，写入 _cum_daily.csv。
+
+    列：factor_col, Date, g1, g2, g3, g4, g5, long_short
+    """
+    path = os.path.join(csv_dir, "_cum_tick.csv")
+    if not os.path.exists(path):
+        return
+
+    df = pd.read_csv(path, dtype={"Date": str, "SampleTime": str})
+    g_keep = [c for c in ["g1", "g2", "g3", "g4", "g5", "long_short"] if c in df.columns]
+    daily = (
+        df.groupby(["factor_col", "Date"])[g_keep]
+        .last()
+        .reset_index()
+    )
+    daily.to_csv(os.path.join(csv_dir, "_cum_daily.csv"), index=False)
+
+
 # ── 批量入口 ──────────────────────────────────────────────────────────────────
 
 def _worker(args) -> str:
@@ -337,5 +413,7 @@ def run_cs_quantile(
             sub_dir = os.path.join(base_dir, f"{h_key}_{sess}")
             _build_daily(sub_dir)
             _build_summary(sub_dir)
+            _build_cum_tick(sub_dir)
+            _build_cum_daily(sub_dir)
 
     print(f"截面分层计算完成：{base_dir}")

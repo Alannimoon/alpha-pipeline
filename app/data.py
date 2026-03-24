@@ -32,11 +32,6 @@ def sort_factor_cols(cols: list[str]) -> list[str]:
     return sorted(cols, key=key)
 
 
-def _horizon_step(ret_horizon: str) -> int:
-    """从 'ret100' 提取步长 100。"""
-    return int(ret_horizon.replace("ret", ""))
-
-
 def available_quantile_dates(factor_name: str, ret_horizon: str, session: str) -> list[str]:
     """返回 cs_quantile 目录下所有可用日期。"""
     csv_dir = os.path.join(
@@ -101,57 +96,15 @@ def load_cs_daily_trend(
 
 
 @st.cache_data
-def _load_quantile_raw_nonolap(
-    factor_name: str, ret_horizon: str, session: str, factor_col: str,
-) -> pd.DataFrame:
-    """
-    内部缓存：读取所有日期文件，非重叠采样后拼接，返回原始（未累计）数据。
-
-    步长 = ret_horizon 对应的 tick 数（100/200/300），从每天第 0 行开始采样。
-    每天末尾不足一个完整窗口的 tick 自然缺失（ret_fwd 为 NaN 不参与后续计算）。
-
-    返回列：Date, SampleTime, g1, g2, g3, g4, g5
-    """
-    csv_dir = os.path.join(
-        config.EVAL_ROOT, "cs_quantile", factor_name, f"{ret_horizon}_{session}"
-    )
-    files = sorted(
-        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
-        if not os.path.basename(f).startswith("_")
-    )
-    if not files:
-        return pd.DataFrame()
-
-    step = _horizon_step(ret_horizon)
-    g_cols_raw = [f"g{g}_{factor_col}" for g in range(1, 6)]
-
-    dfs = []
-    for f in files:
-        day = os.path.splitext(os.path.basename(f))[0]
-        df  = pd.read_csv(f, dtype={"SampleTime": str})
-        cols_present = [c for c in g_cols_raw if c in df.columns]
-        if not cols_present:
-            continue
-        df_sub = df[["SampleTime"] + cols_present].iloc[::step].copy()
-        df_sub.insert(0, "Date", day)
-        dfs.append(df_sub)
-
-    if not dfs:
-        return pd.DataFrame()
-
-    combined = pd.concat(dfs, ignore_index=True)
-    combined = combined.rename(columns={f"g{g}_{factor_col}": f"g{g}" for g in range(1, 6)})
-    return combined  # 列：Date, SampleTime, g1, g2, g3, g4, g5
-
-
-@st.cache_data
 def load_quantile_tick_one_day(
     factor_name: str, ret_horizon: str, session: str, day: str, factor_col: str,
 ) -> pd.DataFrame:
     """
-    单日 tick 级别累计收益。
+    单日 tick 级别累计收益（实时计算，数据量小无需预计算）。
 
-    读取指定日期文件，非重叠采样后在日内做 cumsum()（从 0 开始，不跨日）。
+    读取指定日期的原始文件，全量 tick（不抽样），在日内做 cumsum()，
+    每天从 0 开始，不跨日。
+
     返回列：SampleTime, g1, g2, g3, g4, g5, long_short
     """
     path = os.path.join(
@@ -161,21 +114,18 @@ def load_quantile_tick_one_day(
     if not os.path.exists(path):
         return pd.DataFrame()
 
-    step = _horizon_step(ret_horizon)
     g_cols_raw = [f"g{g}_{factor_col}" for g in range(1, 6)]
-
     df = pd.read_csv(path, dtype={"SampleTime": str})
     cols_present = [c for c in g_cols_raw if c in df.columns]
     if not cols_present:
         return pd.DataFrame()
 
-    df_sub = df[["SampleTime"] + cols_present].iloc[::step].copy()
-    df_sub = df_sub.rename(columns={f"g{g}_{factor_col}": f"g{g}" for g in range(1, 6)})
-
-    g_cols = [c for c in ["g1", "g2", "g3", "g4", "g5"] if c in df_sub.columns]
-    df_sub[g_cols] = df_sub[g_cols].cumsum()
-    df_sub["long_short"] = df_sub["g5"] - df_sub["g1"]
-    return df_sub.reset_index(drop=True)
+    out = df[["SampleTime"] + cols_present].copy()
+    out = out.rename(columns={f"g{g}_{factor_col}": f"g{g}" for g in range(1, 6)})
+    g_cols = [c for c in ["g1", "g2", "g3", "g4", "g5"] if c in out.columns]
+    out[g_cols] = out[g_cols].cumsum()
+    out["long_short"] = out["g5"] - out["g1"]
+    return out.reset_index(drop=True)
 
 
 @st.cache_data
@@ -183,22 +133,23 @@ def load_quantile_tick_cum(
     factor_name: str, ret_horizon: str, session: str, factor_col: str,
 ) -> pd.DataFrame:
     """
-    tick 级别累计收益。
-
-    对所有交易日的非重叠采样点（共 N_days × ~(4740/step) 行），
-    跨日连续做 cumsum()，每行代表该持仓期结束时的累计收益。
+    tick 级别跨日累计收益，读取预计算的 _cum_tick.csv。
 
     返回列：Date, SampleTime, g1, g2, g3, g4, g5, long_short
     """
-    df = _load_quantile_raw_nonolap(factor_name, ret_horizon, session, factor_col)
-    if df.empty:
-        return df
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", "_cum_tick.csv"
+    )
+    if not os.path.exists(path):
+        return pd.DataFrame()
 
-    g_cols = [f"g{g}" for g in range(1, 6)]
-    out = df.copy()
-    out[g_cols] = out[g_cols].cumsum()
-    out["long_short"] = out["g5"] - out["g1"]
-    return out
+    df = pd.read_csv(path, dtype={"Date": str, "SampleTime": str})
+    return (
+        df[df["factor_col"] == factor_col]
+        .drop(columns="factor_col")
+        .reset_index(drop=True)
+    )
 
 
 @st.cache_data
@@ -206,26 +157,25 @@ def load_quantile_daily_cum(
     factor_name: str, ret_horizon: str, session: str, factor_col: str,
 ) -> pd.DataFrame:
     """
-    日频累计收益。
-
-    每天先将所有非重叠采样点的收益求和（代表当天策略总收益），
-    再按日期顺序做 cumsum()，每行代表截至该交易日的累计收益。
-
-    与 tick 视图的关系：日频累计值 = tick 累计曲线上每天最后一个采样点的值。
+    日频累计收益，读取预计算的 _cum_daily.csv。
 
     返回列：Date, g1, g2, g3, g4, g5, long_short
     """
-    df = _load_quantile_raw_nonolap(factor_name, ret_horizon, session, factor_col)
-    if df.empty:
-        return df
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", "_cum_daily.csv"
+    )
+    if not os.path.exists(path):
+        return pd.DataFrame()
 
-    g_cols = [f"g{g}" for g in range(1, 6)]
-    daily = df.groupby("Date")[g_cols].sum().reset_index()
-    daily = daily.sort_values("Date").reset_index(drop=True)
-    daily[g_cols] = daily[g_cols].cumsum()
-    daily["long_short"] = daily["g5"] - daily["g1"]
-    daily["Date"] = pd.to_datetime(daily["Date"])
-    return daily
+    df = pd.read_csv(path, dtype={"Date": str})
+    out = (
+        df[df["factor_col"] == factor_col]
+        .drop(columns="factor_col")
+        .reset_index(drop=True)
+    )
+    out["Date"] = pd.to_datetime(out["Date"])
+    return out
 
 
 @st.cache_data
