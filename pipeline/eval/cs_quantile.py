@@ -185,12 +185,6 @@ def _compute_day(
         base_df.insert(0, "Date", day)
 
         results[f"{h_key}_all"] = base_df.reset_index(drop=True)
-        results[f"{h_key}_am"]  = base_df[
-            base_df["SampleTime"] <= "11:29:57"
-        ].reset_index(drop=True)
-        results[f"{h_key}_pm"]  = base_df[
-            base_df["SampleTime"] >= "13:00:00"
-        ].reset_index(drop=True)
 
     return results
 
@@ -409,12 +403,10 @@ def run_cs_quantile(
 
     # 自动生成每个子目录的汇总文件
     for h_key in _RET_HORIZONS:
-        for sess in ("all", "am", "pm"):
-            sub_dir = os.path.join(base_dir, f"{h_key}_{sess}")
-            _build_daily(sub_dir)
-            _build_summary(sub_dir)
-        # 累计收益只对全天计算（am/pm 是 all 的子集，分半天跨日无意义）
-        _build_cum_tick(os.path.join(base_dir, f"{h_key}_all"))
-        _build_cum_daily(os.path.join(base_dir, f"{h_key}_all"))
+        sub_dir = os.path.join(base_dir, f"{h_key}_all")
+        _build_daily(sub_dir)
+        _build_summary(sub_dir)
+        _build_cum_tick(sub_dir)
+        _build_cum_daily(sub_dir)
 
     print(f"截面分层计算完成：{base_dir}")
