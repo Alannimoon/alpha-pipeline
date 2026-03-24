@@ -201,14 +201,16 @@ with tab_quantile:
                     quantile_intraday_cum_chart(intraday_df, q_tick_date),
                     use_container_width=True,
                 )
-                # 单日 PnL：从 intraday_df 最后一行算
-                last = intraday_df.iloc[-1]
-                n    = len(intraday_df)
+                # 单日 PnL：从 intraday_df 最后一个有效行算
+                valid = intraday_df.dropna(subset=["g5"]) if "g5" in intraday_df.columns else intraday_df
+                n     = len(valid)
                 day_pnl = {"n_ticks": n}
-                for c in ["g1", "g2", "g3", "g4", "g5", "long_short"]:
-                    if c in last.index and pd.notna(last[c]):
-                        day_pnl[c]           = float(last[c])
-                        day_pnl[f"avg_{c}"]  = float(last[c]) / n
+                if not valid.empty:
+                    last = valid.iloc[-1]
+                    for c in ["g1", "g2", "g3", "g4", "g5", "long_short"]:
+                        if c in last.index and pd.notna(last[c]):
+                            day_pnl[c]          = float(last[c])
+                            day_pnl[f"avg_{c}"] = float(last[c]) / n if n > 0 else 0
                 _show_pnl_stats(day_pnl, title=f"每 tick 平均收益（{q_tick_date}）")
     else:
         daily_df = load_quantile_daily_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
