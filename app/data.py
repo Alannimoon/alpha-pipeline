@@ -202,6 +202,26 @@ def load_quantile_daily_cum(
     return out
 
 
+@st.cache_data
+def load_monotonicity_stats(
+    factor_name: str, ret_horizon: str, session: str, factor_col: str,
+) -> pd.DataFrame:
+    """
+    读取 _monotonicity_daily.csv，返回指定 factor_col 的逐日单调性得分。
+    列：Date, mono_mean, mono_std
+    """
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_quantile", factor_name,
+        f"{ret_horizon}_{session}", "_monotonicity_daily.csv"
+    )
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    df = pd.read_csv(path, dtype={"Date": str})
+    return (df[df["factor_col"] == factor_col]
+            .drop(columns="factor_col")
+            .reset_index(drop=True))
+
+
 def quantile_tick_chart_path(
     factor_name: str, ret_horizon: str, session: str, factor_col: str,
 ) -> str | None:

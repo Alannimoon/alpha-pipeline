@@ -383,6 +383,58 @@ def _build_cum_daily(csv_dir: str) -> None:
     all_last[keep].to_csv(os.path.join(csv_dir, "_cum_daily.csv"), index=False)
 
 
+def _build_monotonicity(csv_dir: str) -> None:
+    """
+    逐 tick 计算单调性得分 = (g1 - g5) / (g2 - g4)，按日聚合。
+
+    读取原始分层日期文件（非 _ 开头），写 _monotonicity_daily.csv。
+    列：factor_col, Date, mono_mean, mono_std
+    """
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    if not files:
+        return
+
+    first_cols = pd.read_csv(files[0], nrows=0).columns.tolist()
+    fc_list = sorted({m.group(1) for col in first_cols
+                      if (m := re.match(r"g\d+_(.*)", col))})
+    if not fc_list:
+        return
+
+    rows = []
+    file_iter = tqdm(files, desc="monotonicity") if tqdm else files
+    for f in file_iter:
+        day = os.path.splitext(os.path.basename(f))[0]
+        df  = pd.read_csv(f, dtype={"SampleTime": str})
+        for fc in fc_list:
+            g1 = df.get(f"g1_{fc}")
+            g2 = df.get(f"g2_{fc}")
+            g4 = df.get(f"g4_{fc}")
+            g5 = df.get(f"g5_{fc}")
+            if any(x is None for x in (g1, g2, g4, g5)):
+                continue
+            denom  = g2 - g4
+            valid  = denom.abs() > 1e-12
+            scores = ((g1 - g5) / denom)[valid].dropna()
+            if scores.empty:
+                continue
+            rows.append({
+                "factor_col": fc,
+                "Date":       day,
+                "mono_mean":  scores.mean(),
+                "mono_std":   scores.std(),
+            })
+
+    if not rows:
+        return
+    (pd.DataFrame(rows)
+       .sort_values(["factor_col", "Date"])
+       .reset_index(drop=True)
+       .to_csv(os.path.join(csv_dir, "_monotonicity_daily.csv"), index=False))
+
+
 _GROUP_COLORS = ["#d62728", "#ff7f0e", "#8c8c8c", "#2ca02c", "#1f77b4"]
 
 
@@ -541,16 +593,18 @@ def run_cs_quantile(
         _build_summary(sub_dir)
         _build_cum_tick(sub_dir)
         _build_cum_daily(sub_dir)
+        _build_monotonicity(sub_dir)
         _build_cum_tick_chart(sub_dir)
 
     print(f"截面分层计算完成：{base_dir}")
 
 
 def run_cs_quantile_chart(eval_root: str, factor_name: str):
-    """只重新生成跨日 tick 静态图，不重跑分层计算。"""
+    """重新生成跨日 tick 静态图和单调性得分，不重跑分层计算。"""
     base_dir = os.path.join(eval_root, "cs_quantile", factor_name)
     for h_key in _RET_HORIZONS:
         sub_dir = os.path.join(base_dir, f"{h_key}_all")
         if os.path.isdir(sub_dir):
+            _build_monotonicity(sub_dir)
             _build_cum_tick_chart(sub_dir)
     print(f"图表重新生成完成：{base_dir}")

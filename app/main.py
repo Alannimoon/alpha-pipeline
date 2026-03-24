@@ -19,7 +19,7 @@ from data import (
     load_cs_daily_trend, load_cs_one_day,
     load_quantile_tick_cum, load_quantile_tick_one_day, load_quantile_daily_cum,
     load_quantile_pnl_stats, quantile_tick_chart_path,
-    load_factor_meta,
+    load_monotonicity_stats, load_factor_meta,
 )
 from charts import (
     ic_summary_chart, cs_daily_trend_chart, cs_intraday_chart,
@@ -127,7 +127,7 @@ with tab_cs:
             )
 
 
-def _show_pnl_stats(pnl: dict, title: str) -> None:
+def _show_pnl_stats(pnl: dict, title: str, mono: float | None = None) -> None:
     if not pnl:
         return
     st.divider()
@@ -144,10 +144,8 @@ def _show_pnl_stats(pnl: dict, title: str) -> None:
             if avg_val is not None:
                 col_ui.metric(label, f"{avg_val:.4%}")
         else:
-            g1, g2, g4, g5 = (pnl.get("g1"), pnl.get("g2"),
-                               pnl.get("g4"), pnl.get("g5"))
-            if None not in (g1, g2, g4, g5) and (g2 - g4) != 0:
-                col_ui.metric(label, f"{(g1 - g5) / (g2 - g4):.4f}")
+            if mono is not None:
+                col_ui.metric(label, f"{mono:.4f}")
 
 
 # ── Tab 3：截面分层 ───────────────────────────────────────────────────────────
@@ -180,15 +178,17 @@ with tab_quantile:
         date_options = ["全部（跨日）"] + q_dates
         q_tick_date = st.selectbox("日期", date_options, key="q_tick_date")
 
+        _mono_df = load_monotonicity_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
+
         if q_tick_date == "全部（跨日）":
             img_path = quantile_tick_chart_path(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
             if img_path is None:
                 st.warning("暂无预渲染图片，请先运行 cs_quantile。")
             else:
                 st.image(img_path, use_container_width=True)
-            # 全年 PnL
+            mono = float(_mono_df["mono_mean"].mean()) if not _mono_df.empty else None
             _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
-                            title="每 tick 平均收益（全周期）")
+                            title="每 tick 平均收益（全周期）", mono=mono)
         else:
             intraday_df = load_quantile_tick_one_day(
                 q_factor, ret_horizon, _Q_SESSION, q_tick_date, q_factor_col
@@ -201,7 +201,6 @@ with tab_quantile:
                     quantile_intraday_cum_chart(intraday_df, q_tick_date),
                     use_container_width=True,
                 )
-                # 单日 PnL：从 intraday_df 最后一个有效行算
                 valid = intraday_df.dropna(subset=["g5"]) if "g5" in intraday_df.columns else intraday_df
                 n     = len(valid)
                 day_pnl = {"n_ticks": n}
@@ -211,7 +210,9 @@ with tab_quantile:
                         if c in last.index and pd.notna(last[c]):
                             day_pnl[c]          = float(last[c])
                             day_pnl[f"avg_{c}"] = float(last[c]) / n if n > 0 else 0
-                _show_pnl_stats(day_pnl, title=f"每 tick 平均收益（{q_tick_date}）")
+                day_mono_row = _mono_df[_mono_df["Date"] == q_tick_date]
+                day_mono = float(day_mono_row["mono_mean"].iloc[0]) if not day_mono_row.empty else None
+                _show_pnl_stats(day_pnl, title=f"每 tick 平均收益（{q_tick_date}）", mono=day_mono)
     else:
         daily_df = load_quantile_daily_cum(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
         if daily_df.empty:
@@ -219,9 +220,10 @@ with tab_quantile:
         else:
             st.caption(f"共 {len(daily_df)} 个交易日，跨日累计收益。")
             st.plotly_chart(quantile_daily_cum_chart(daily_df), use_container_width=True)
-        # 日频视图也显示全年 PnL
+        _mono_df = load_monotonicity_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col)
+        mono = float(_mono_df["mono_mean"].mean()) if not _mono_df.empty else None
         _show_pnl_stats(load_quantile_pnl_stats(q_factor, ret_horizon, _Q_SESSION, q_factor_col),
-                        title="每 tick 平均收益（全周期）")
+                        title="每 tick 平均收益（全周期）", mono=mono)
 
 
 # ── Tab 4：因子说明 ────────────────────────────────────────────────────────────
