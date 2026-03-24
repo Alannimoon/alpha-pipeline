@@ -69,28 +69,16 @@ def load_cs_daily_trend(
     factor_name: str, ret_horizon: str, session: str
 ) -> pd.DataFrame:
     """
-    CS-IC 跨日趋势：每个交易日对所有时间点取均值 → 日度 IC 序列。
-    X 轴 = Date，适合观察因子信号跨日的稳定性与趋势。
+    CS-IC 跨日趋势：读取预计算的 _daily_trend.csv。
     返回列：Date, ic_{fc}, rankic_{fc}, ...
     """
-    csv_dir = os.path.join(
-        config.EVAL_ROOT, "cs_ic", factor_name, f"{ret_horizon}_{session}"
+    path = os.path.join(
+        config.EVAL_ROOT, "cs_ic", factor_name,
+        f"{ret_horizon}_{session}", "_daily_trend.csv"
     )
-    files = sorted(glob.glob(os.path.join(csv_dir, "*.csv")))
-    if not files:
+    if not os.path.exists(path):
         return pd.DataFrame()
-
-    rows = []
-    for f in files:
-        day = os.path.splitext(os.path.basename(f))[0]
-        df = pd.read_csv(f, dtype={"SampleTime": str})
-        row = {"Date": day}
-        for c in df.columns:
-            if c.startswith("ic_") or c.startswith("rankic_"):
-                row[c] = df[c].mean()
-        rows.append(row)
-
-    out = pd.DataFrame(rows)
+    out = pd.read_csv(path)
     out["Date"] = pd.to_datetime(out["Date"])
     return out.sort_values("Date").reset_index(drop=True)
 

@@ -39,6 +39,7 @@ NaN 处理
 不做主动过滤，保持时序完整。
 """
 
+import glob
 import os
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -212,4 +213,39 @@ def run_cs_ic(
             for f in inner:
                 f.result()
 
+    # 每个子目录重建 _daily_trend.csv
+    subdirs = [
+        d for d in glob.glob(os.path.join(base_dir, "*"))
+        if os.path.isdir(d)
+    ]
+    trend_iter = tqdm(subdirs, desc="daily_trend") if tqdm else subdirs
+    for subdir in trend_iter:
+        _build_daily_trend(subdir)
+
     print(f"CS-IC 计算完成：{base_dir}")
+
+
+def _build_daily_trend(csv_dir: str) -> None:
+    """
+    对目录下所有日期 CSV 按行取 IC 均值，汇总为 _daily_trend.csv。
+    列：Date, ic_{fc}, rankic_{fc}, ...
+    """
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    if not files:
+        return
+
+    rows = []
+    for f in files:
+        day = os.path.splitext(os.path.basename(f))[0]
+        df  = pd.read_csv(f, dtype={"SampleTime": str})
+        row = {"Date": day}
+        for c in df.columns:
+            if c.startswith("ic_") or c.startswith("rankic_"):
+                row[c] = df[c].mean()
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    out.to_csv(os.path.join(csv_dir, "_daily_trend.csv"), index=False)
