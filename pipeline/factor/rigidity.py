@@ -153,7 +153,8 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         ss_res = np.where(vw_a, (pw_a - y_hat)          ** 2, 0.0).sum(axis=1)
         ss_tot = np.where(vw_a, (pw_a - y_bar[:, None]) ** 2, 0.0).sum(axis=1)
 
-        r2       = np.where(ss_tot > 1e-12, 1.0 - ss_res / ss_tot, np.nan)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r2 = np.where(ss_tot > 1e-12, 1.0 - ss_res / ss_tot, np.nan)
         rigidity = b_coef * r2 * np.log(1.0 / (np.abs(c_coef) + EPS))
         rigidity = np.where(np.isfinite(r2), rigidity, np.nan)
 
