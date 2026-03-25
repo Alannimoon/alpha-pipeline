@@ -86,14 +86,14 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         v_f  = vw.astype(np.float64)             # (N, w)
         p_m  = np.where(vw, p_win, 0.0)          # (N, w)
 
-        sn   = v_f.sum(axis=1)                   # (N,)  有效 tick 数
-        sx   = v_f.dot(x_arr)                    # (N,)  Σ xᵢ
-        sx2  = v_f.dot(x2_arr)                   # (N,)  Σ xᵢ²
-        sx3  = v_f.dot(x2_arr * x_arr)           # (N,)  Σ xᵢ³
-        sx4  = v_f.dot(x2_arr * x2_arr)          # (N,)  Σ xᵢ⁴
-        sy   = p_m.sum(axis=1)                   # (N,)  Σ yᵢ
-        sxy  = p_m.dot(x_arr)                    # (N,)  Σ xᵢ yᵢ
-        sx2y = p_m.dot(x2_arr)                   # (N,)  Σ xᵢ² yᵢ
+        sn   = v_f.sum(axis=1)                        # (N,)  有效 tick 数
+        sx   = (v_f * x_arr).sum(axis=1)             # (N,)  Σ xᵢ
+        sx2  = (v_f * x2_arr).sum(axis=1)            # (N,)  Σ xᵢ²
+        sx3  = (v_f * x2_arr * x_arr).sum(axis=1)    # (N,)  Σ xᵢ³
+        sx4  = (v_f * x2_arr * x2_arr).sum(axis=1)   # (N,)  Σ xᵢ⁴
+        sy   = p_m.sum(axis=1)                        # (N,)  Σ yᵢ
+        sxy  = (p_m * x_arr).sum(axis=1)              # (N,)  Σ xᵢ yᵢ
+        sx2y = (p_m * x2_arr).sum(axis=1)             # (N,)  Σ xᵢ² yᵢ
 
         del v_f, p_m
 
