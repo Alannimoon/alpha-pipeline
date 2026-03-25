@@ -25,13 +25,21 @@ except ImportError:
     tqdm = None
 
 from ._core import load_data
-from . import bap, mom
+from . import bap, mom, acc_mom, neg_skew, amp_slice, rigidity, pv_corr, rsrs, oir, ofd
 
 # ── 注册因子 ──────────────────────────────────────────────────────────────────
 # 新增因子：import 后加入此字典即可
 _FACTOR_MAP = {
     "bap": bap,
     "mom": mom,
+    "acc_mom": acc_mom,
+    "neg_skew": neg_skew,
+    "amp_slice": amp_slice,
+    "rigidity": rigidity,
+    "pv_corr": pv_corr,
+    "rsrs": rsrs,
+    "oir": oir,
+    "ofd": ofd,
 }
 
 
