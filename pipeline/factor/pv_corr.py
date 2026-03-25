@@ -72,8 +72,9 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         r_price_valid = can_use & can_lag & (price_lag > EPS)
         r_vol_valid   = r_price_valid & (vol_lag > EPS)
 
-        r_price = np.where(r_price_valid, price   / price_lag - 1, np.nan)
-        r_vol   = np.where(r_vol_valid,   cumvol  / vol_lag   - 1, np.nan)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r_price = np.where(r_price_valid, price  / price_lag - 1, np.nan)
+            r_vol   = np.where(r_vol_valid,   cumvol / vol_lag   - 1, np.nan)
 
         # ── 第二步：rolling z-score（窗口 2w，ddof=0）────────────────────────
         rp_s = pd.Series(r_price)
