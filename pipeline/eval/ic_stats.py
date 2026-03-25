@@ -34,9 +34,21 @@ TS 列：ret_horizon, session, factor_window, factor_col,
 
 import os
 import glob
+import re
 
 import numpy as np
 import pandas as pd
+
+
+def _parse_window(fc: str, factor_name: str) -> int:
+    """从因子列名提取窗口数值（用于排序）。
+
+    去掉 '{factor_name}_' 前缀后，取剩余部分的第一个整数。
+    e.g. bap_15m → 15, acc_mom_25_50t → 25, neg_skew_30m → 30
+    """
+    suffix = fc[len(factor_name) + 1:]
+    m = re.search(r'\d+', suffix)
+    return int(m.group()) if m else 0
 
 _RET_HORIZONS = ["ret100", "ret200", "ret300"]
 _SESSIONS     = ["all", "am", "pm"]
@@ -110,7 +122,7 @@ def compute_cs_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
             csv_dir = os.path.join(base_dir, f"{ret_h}_{sess}")
             stats = _cs_stats_one(csv_dir, factor_cols)
             for fc, s in stats.items():
-                window = int(fc.split("_")[1].replace("m", ""))
+                window = _parse_window(fc, factor_name)
                 records.append({"ret_horizon": ret_h, "session": sess,
                                  "factor_window": window, "factor_col": fc, **s})
 
@@ -196,7 +208,7 @@ def compute_ts_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
             csv_dir = os.path.join(base_dir, f"{ret_h}_{sess}")
             stats = _ts_stats_one(csv_dir, factor_cols)
             for fc, s in stats.items():
-                window = int(fc.split("_")[1].replace("m", ""))
+                window = _parse_window(fc, factor_name)
                 records.append({"ret_horizon": ret_h, "session": sess,
                                  "factor_window": window, "factor_col": fc, **s})
 
