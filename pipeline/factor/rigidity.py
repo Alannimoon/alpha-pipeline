@@ -25,11 +25,19 @@ Rigidity —— 价格刚性因子（Price Rigidity）。
 窗口
 ----
   [10, 20, 30, 45, 60, 90, 105] 分钟
+
+实现说明
+--------
+  用 numba.njit(cache=True) JIT 编译内层循环：保留逐 tick 遍历的
+  cache 友好结构，同时消除 Python 解释开销，达到接近 C 的速度。
+  Cramer 法则在循环内直接计算，无需构造矩阵或调用 BLAS。
 """
 
+import math
+
+import numba
 import numpy as np
 import pandas as pd
-from numpy.lib.stride_tricks import sliding_window_view
 
 from ._core import is_limit_tick, window_valid_mask, rolling_any, TICKS_PER_MIN
 
@@ -38,26 +46,106 @@ MAX_INVALID_RATIO = 0.10
 EPS               = 1e-8
 
 
+@numba.njit(cache=True)
+def _rigidity_window(price, valid_tick, w_ok, w, eps):
+    """
+    对单只股票单日数据计算单个窗口大小的 rigidity 序列。
+
+    逐 tick 遍历，每次在窗口内累加统计量，用 Cramer 法则解三元方程组，
+    再算 R²，最终得到因子值。全程无大数组，对 CPU cache 友好。
+    """
+    n   = len(price)
+    val = np.empty(n)
+    for i in range(n):
+        val[i] = np.nan
+
+    for t in range(w - 1, n):
+        if not w_ok[t]:
+            continue
+
+        start = t - w + 1
+
+        # ── 累加统计量 ────────────────────────────────────────────────────────
+        sn = 0.0; sx = 0.0; sx2 = 0.0; sx3 = 0.0; sx4 = 0.0
+        sy = 0.0; sxy = 0.0; sx2y = 0.0
+
+        for j in range(start, t + 1):
+            if valid_tick[j]:
+                xi  = float(j - start)
+                p   = price[j]
+                xi2 = xi * xi
+                sn   += 1.0
+                sx   += xi
+                sx2  += xi2
+                sx3  += xi2 * xi
+                sx4  += xi2 * xi2
+                sy   += p
+                sxy  += xi * p
+                sx2y += xi2 * p
+
+        if sn < 3.0:
+            continue
+
+        # ── Cramer 法则解 A·[c, b, a]ᵀ = B ──────────────────────────────────
+        det_A = (sx4 * (sx2 * sn  - sx  * sx )
+               - sx3 * (sx3 * sn  - sx  * sx2)
+               + sx2 * (sx3 * sx  - sx2 * sx2))
+
+        if abs(det_A) <= 1e-20:
+            continue
+
+        det_b = (sx4  * (sxy * sn  - sx  * sy )
+               - sx2y * (sx3 * sn  - sx  * sx2)
+               + sx2  * (sx3 * sy  - sxy * sx2))
+
+        det_c = (sx2y * (sx2 * sn  - sx  * sx )
+               - sx3  * (sxy * sn  - sx  * sy )
+               + sx2  * (sxy * sx  - sx2 * sy ))
+
+        det_a = (sx4  * (sx2 * sy  - sxy * sx )
+               - sx3  * (sx3 * sy  - sxy * sx2)
+               + sx2y * (sx3 * sx  - sx2 * sx2))
+
+        b_coef = det_b / det_A
+        c_coef = det_c / det_A
+        a_coef = det_a / det_A
+
+        # ── 计算 R² ───────────────────────────────────────────────────────────
+        y_bar  = sy / sn
+        ss_res = 0.0
+        ss_tot = 0.0
+
+        for j in range(start, t + 1):
+            if valid_tick[j]:
+                xi    = float(j - start)
+                p     = price[j]
+                y_hat = a_coef + b_coef * xi + c_coef * xi * xi
+                ss_res += (p - y_hat) ** 2
+                ss_tot += (p - y_bar)  ** 2
+
+        if ss_tot < 1e-12:
+            continue
+
+        r2 = 1.0 - ss_res / ss_tot
+        if r2 != r2:    # isnan
+            continue
+
+        val[t] = b_coef * r2 * math.log(1.0 / (abs(c_coef) + eps))
+
+    return val
+
+
 def compute(df: pd.DataFrame) -> pd.DataFrame:
     """
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
     列名：rigidity_10m, rigidity_10m_has_limit, rigidity_20m, ...
-
-    实现说明
-    --------
-    用 sliding_window_view 一次性取出所有滑动窗口，通过矩阵点积批量计算
-    二次多项式法方程的 8 个统计量（sn, sx, sx2, sx3, sx4, sy, sxy, sx2y），
-    再用 Cramer 法则对所有有效窗口同时解方程，向量化计算 R²。
-    全程零 Python 循环，较原逐 tick 实现有 100-500x 加速。
     """
-    can_use = df["CanUsePrice"].to_numpy(bool)
-    price   = df["Price"].to_numpy(np.float64)
-    limit   = is_limit_tick(df)
-    n       = len(df)
-
-    # 预计算全局有效掩码（CanUsePrice & 价格有限）
+    can_use    = df["CanUsePrice"].to_numpy(bool)
+    price      = df["Price"].to_numpy(np.float64)
+    limit      = is_limit_tick(df)
+    n          = len(df)
     valid_tick = can_use & np.isfinite(price)
 
     out = {}
@@ -66,100 +154,11 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         w      = m * TICKS_PER_MIN
         w_ok   = window_valid_mask(can_use, w, MAX_INVALID_RATIO)
         hl_arr = np.where(w_ok, rolling_any(limit, w), False)
-        val    = np.full(n, np.nan)
 
         if n < w:
-            out[f"rigidity_{m}m"]           = val
-            out[f"rigidity_{m}m_has_limit"] = hl_arr.astype(bool)
-            continue
-
-        # ── 滑动窗口视图（零拷贝）────────────────────────────────────────────
-        p_win = sliding_window_view(price,      w)   # (N, w)  view
-        vw    = sliding_window_view(valid_tick, w)   # (N, w)  bool view
-
-        # ── x 幂次（每窗口大小只算一次）──────────────────────────────────────
-        x_arr  = np.arange(w, dtype=np.float64)
-        x2_arr = x_arr * x_arr
-
-        # ── 向量化统计量（矩阵点积代替逐行循环）─────────────────────────────
-        # v_f: 0/1 掩码，p_m: 无效处置零，避免 NaN 污染求和
-        v_f  = vw.astype(np.float64)             # (N, w)
-        p_m  = np.where(vw, p_win, 0.0)          # (N, w)
-
-        sn   = v_f.sum(axis=1)                        # (N,)  有效 tick 数
-        sx   = (v_f * x_arr).sum(axis=1)             # (N,)  Σ xᵢ
-        sx2  = (v_f * x2_arr).sum(axis=1)            # (N,)  Σ xᵢ²
-        sx3  = (v_f * x2_arr * x_arr).sum(axis=1)    # (N,)  Σ xᵢ³
-        sx4  = (v_f * x2_arr * x2_arr).sum(axis=1)   # (N,)  Σ xᵢ⁴
-        sy   = p_m.sum(axis=1)                        # (N,)  Σ yᵢ
-        sxy  = (p_m * x_arr).sum(axis=1)              # (N,)  Σ xᵢ yᵢ
-        sx2y = (p_m * x2_arr).sum(axis=1)             # (N,)  Σ xᵢ² yᵢ
-
-        del v_f, p_m
-
-        # ── Cramer 法则（全向量化，零 Python 循环）───────────────────────────
-        # 法方程 A·[c, b, a]ᵀ = B，其中
-        # A = [[sx4, sx3, sx2],      B = [sx2y]
-        #      [sx3, sx2, sx ],          [sxy ]
-        #      [sx2, sx,  sn ]]          [sy  ]
-        det_A = (sx4 * (sx2 * sn  - sx  * sx )
-               - sx3 * (sx3 * sn  - sx  * sx2)
-               + sx2 * (sx3 * sx  - sx2 * sx2))
-
-        # b 的 Cramer 行列式（替换第 1 列为 B）
-        det_b = (sx4  * (sxy * sn  - sx  * sy )
-               - sx2y * (sx3 * sn  - sx  * sx2)
-               + sx2  * (sx3 * sy  - sxy * sx2))
-
-        # c 的 Cramer 行列式（替换第 0 列为 B）
-        det_c = (sx2y * (sx2 * sn  - sx  * sx )
-               - sx3  * (sxy * sn  - sx  * sy )
-               + sx2  * (sxy * sx  - sx2 * sy ))
-
-        # a 的 Cramer 行列式（替换第 2 列为 B）
-        det_a = (sx4  * (sx2 * sy  - sxy * sx )
-               - sx3  * (sx3 * sy  - sxy * sx2)
-               + sx2y * (sx3 * sx  - sx2 * sx2))
-
-        # ── 有效窗口筛选 ──────────────────────────────────────────────────────
-        # w_ok[w-1:] 对应窗口索引 0..N-1
-        active = w_ok[w - 1:] & (sn >= 3) & (np.abs(det_A) > 1e-20)
-
-        if not active.any():
-            out[f"rigidity_{m}m"]           = val
-            out[f"rigidity_{m}m_has_limit"] = hl_arr.astype(bool)
-            continue
-
-        win_idx = np.where(active)[0]   # 有效窗口索引（0-based in [0, N-1]）
-        dA      = det_A[win_idx]
-
-        b_coef = det_b[win_idx] / dA    # (K,) 线性斜率
-        c_coef = det_c[win_idx] / dA    # (K,) 二次系数
-        a_coef = det_a[win_idx] / dA    # (K,) 截距
-
-        # ── 计算 R²（只对有效窗口）────────────────────────────────────────────
-        pw_a = p_win[win_idx]           # (K, w)  实际拷贝
-        vw_a = vw[win_idx]              # (K, w)  bool
-
-        # 拟合值 y_hat = a + b·x + c·x²（广播）
-        y_hat = (a_coef[:, None]
-                 + b_coef[:, None] * x_arr[None, :]
-                 + c_coef[:, None] * x2_arr[None, :])   # (K, w)
-
-        sn_a  = sn[win_idx]                             # (K,)
-        y_bar = (np.where(vw_a, pw_a, 0.0).sum(axis=1)
-                 / sn_a)                                # (K,) 有效点均值
-
-        ss_res = np.where(vw_a, (pw_a - y_hat)          ** 2, 0.0).sum(axis=1)
-        ss_tot = np.where(vw_a, (pw_a - y_bar[:, None]) ** 2, 0.0).sum(axis=1)
-
-        with np.errstate(divide="ignore", invalid="ignore"):
-            r2 = np.where(ss_tot > 1e-12, 1.0 - ss_res / ss_tot, np.nan)
-        rigidity = b_coef * r2 * np.log(1.0 / (np.abs(c_coef) + EPS))
-        rigidity = np.where(np.isfinite(r2), rigidity, np.nan)
-
-        # ── 写回原始 tick 位置（窗口索引 i → tick i+w-1）─────────────────────
-        val[win_idx + w - 1] = rigidity
+            val = np.full(n, np.nan)
+        else:
+            val = _rigidity_window(price, valid_tick, w_ok, w, EPS)
 
         out[f"rigidity_{m}m"]           = val
         out[f"rigidity_{m}m_has_limit"] = hl_arr.astype(bool)
