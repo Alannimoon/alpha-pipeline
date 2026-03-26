@@ -61,9 +61,15 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     askv = df[ASK_VOL_COLS].to_numpy(np.float64)
 
     # ── 逐 tick 计算 OFD_raw ──────────────────────────────────────────────────
-    # 相邻档位价差（4 个差值取均值）
-    avg_bid_spread = np.nanmean(bidp[:, :-1] - bidp[:, 1:], axis=1)   # B1-B2, B2-B3, ...
-    avg_ask_spread = np.nanmean(askp[:, 1:]  - askp[:, :-1], axis=1)  # A2-A1, A3-A2, ...
+    # 非五档有效 tick 的价格直接置 NaN，避免对无效数据做计算
+    mask2d = can_use_l5[:, None]
+    bidp = np.where(mask2d, bidp, np.nan)
+    askp = np.where(mask2d, askp, np.nan)
+
+    # 相邻档位价差（4 个差值取均值）；非五档行全为 NaN，nanmean 会警告，抑制之
+    with np.errstate(all="ignore"):
+        avg_bid_spread = np.nanmean(bidp[:, :-1] - bidp[:, 1:], axis=1)   # B1-B2, B2-B3, ...
+        avg_ask_spread = np.nanmean(askp[:, 1:]  - askp[:, :-1], axis=1)  # A2-A1, A3-A2, ...
 
     total_bidv = np.nansum(bidv, axis=1)
     total_askv = np.nansum(askv, axis=1)
