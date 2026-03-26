@@ -32,6 +32,8 @@ OFD —— 委托密度比率因子（Order Flow Density）。
   [15, 30, 45, 60, 75] 分钟
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -66,8 +68,9 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     bidp = np.where(mask2d, bidp, np.nan)
     askp = np.where(mask2d, askp, np.nan)
 
-    # 相邻档位价差（4 个差值取均值）；非五档行全为 NaN，nanmean 会警告，抑制之
-    with np.errstate(all="ignore"):
+    # 相邻档位价差（4 个差值取均值）；非五档行全为 NaN，nanmean 会发出 RuntimeWarning，抑制之
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
         avg_bid_spread = np.nanmean(bidp[:, :-1] - bidp[:, 1:], axis=1)   # B1-B2, B2-B3, ...
         avg_ask_spread = np.nanmean(askp[:, 1:]  - askp[:, :-1], axis=1)  # A2-A1, A3-A2, ...
 
