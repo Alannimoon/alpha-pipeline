@@ -32,8 +32,6 @@ OFD —— 委托密度比率因子（Order Flow Density）。
   [15, 30, 45, 60, 75] 分钟
 """
 
-import warnings
-
 import numpy as np
 import pandas as pd
 
@@ -68,11 +66,13 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     bidp = np.where(mask2d, bidp, np.nan)
     askp = np.where(mask2d, askp, np.nan)
 
-    # 相邻档位价差（4 个差值取均值）；非五档行全为 NaN，nanmean 会发出 RuntimeWarning，抑制之
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        avg_bid_spread = np.nanmean(bidp[:, :-1] - bidp[:, 1:], axis=1)   # B1-B2, B2-B3, ...
-        avg_ask_spread = np.nanmean(askp[:, 1:]  - askp[:, :-1], axis=1)  # A2-A1, A3-A2, ...
+    # 相邻档位价差（4 个差值取均值）；用 nansum/count 替代 nanmean，避免全 NaN 行的 RuntimeWarning
+    bid_diff = bidp[:, :-1] - bidp[:, 1:]
+    ask_diff = askp[:, 1:]  - askp[:, :-1]
+    bid_cnt  = np.isfinite(bid_diff).sum(axis=1).astype(np.float64)
+    ask_cnt  = np.isfinite(ask_diff).sum(axis=1).astype(np.float64)
+    avg_bid_spread = np.where(bid_cnt > 0, np.nansum(bid_diff, axis=1) / bid_cnt, np.nan)
+    avg_ask_spread = np.where(ask_cnt > 0, np.nansum(ask_diff, axis=1) / ask_cnt, np.nan)
 
     total_bidv = np.nansum(bidv, axis=1)
     total_askv = np.nansum(askv, axis=1)
