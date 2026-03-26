@@ -206,12 +206,17 @@ def run_cs_ic(
         for t in day_iter:
             _worker(t)
     else:
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        pool = ProcessPoolExecutor(max_workers=max_workers)
+        try:
             futs = [pool.submit(_worker, t) for t in tasks]
             inner = tqdm(as_completed(futs), total=len(futs), desc="CS-IC") \
                     if tqdm else as_completed(futs)
             for f in inner:
                 f.result()
+        finally:
+            for p in pool._processes.values():
+                p.terminate()
+            pool.shutdown(wait=False)
 
     # 每个子目录重建 _daily_trend.csv
     subdirs = [

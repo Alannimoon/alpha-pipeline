@@ -15,8 +15,8 @@ AmpSlice —— 振幅分层因子（Amplitude Slice，align 版）。
 有效性条件
 ----------
   window_ok：过去 lookback 个 tick 中 CanUsePrice=False 的比例 < 10%
-  组内所有 tick 须满足 CanUsePrice=True 且价格有限且 > 0，
-  否则该 tick 的因子值为 NaN。
+  组内无效 tick（CanUsePrice=False）价格置 NaN，由 nanmean/nanmax/nanmin 跳过；
+  若某组最低价 ≤ 0 则整个 tick 的因子值为 NaN。
 
 附加输出
 --------

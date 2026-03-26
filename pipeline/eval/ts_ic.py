@@ -206,11 +206,16 @@ def run_ts_ic(
         for t in day_iter:
             _worker(t)
     else:
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+        pool = ProcessPoolExecutor(max_workers=max_workers)
+        try:
             futs = [pool.submit(_worker, t) for t in tasks]
             inner = tqdm(as_completed(futs), total=len(futs), desc="TS-IC") \
                     if tqdm else as_completed(futs)
             for f in inner:
                 f.result()
+        finally:
+            for p in pool._processes.values():
+                p.terminate()
+            pool.shutdown(wait=False)
 
     print(f"TS-IC 计算完成：{base_dir}")

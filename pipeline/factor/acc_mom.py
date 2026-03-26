@@ -11,7 +11,6 @@ AccMom —— 加速度动量因子（Acceleration Momentum）。
   三个 anchor tick 的 CanUsePrice 均须为 True：
     CanUsePrice(t) & CanUsePrice(t-short) & CanUsePrice(t-long)
   否则为 NaN。
-  window_ok：过去 long_tick 个 tick 中 CanUsePrice=False 的比例 < 10%。
 
 附加输出
 --------
@@ -30,16 +29,12 @@ import pandas as pd
 from ._core import (
     TICKS_PER_MIN,
     is_limit_tick,
-    window_valid_mask,
 )
 
 PAIRS = [
     (25, 50), (50, 100), (100, 200), (150, 300), (200, 400),
     (300, 600), (400, 800), (500, 1000), (600, 1200),
 ]
-MAX_INVALID_RATIO = 0.10
-
-
 def compute(df: pd.DataFrame) -> pd.DataFrame:
     """
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
@@ -55,8 +50,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     out = {}
 
     for short, long in PAIRS:
-        w_ok = window_valid_mask(can_use, long, MAX_INVALID_RATIO)
-
         # ── anchor tick 有效性 ───────────────────────────────────────────────
         can_short = np.zeros(n, dtype=bool)
         can_long  = np.zeros(n, dtype=bool)
@@ -72,14 +65,14 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
 
         # ── 因子值 ───────────────────────────────────────────────────────────
         raw = (log_p - log_p_short) - (log_p_short - log_p_long)
-        val = np.where(valid & w_ok, raw, np.nan)
+        val = np.where(valid, raw, np.nan)
 
         # ── has_limit ────────────────────────────────────────────────────────
         limit_short = np.zeros(n, dtype=bool)
         limit_long  = np.zeros(n, dtype=bool)
         limit_short[short:] = limit[:-short]
         limit_long[long:]   = limit[:-long]
-        has_limit = (limit | limit_short | limit_long) & valid & w_ok
+        has_limit = (limit | limit_short | limit_long) & valid
 
         col = f"acc_mom_{short}_{long}t"
         out[col]                = val

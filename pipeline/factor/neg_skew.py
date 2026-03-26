@@ -9,7 +9,7 @@ NegSkew —— 负偏度因子（Negative Skewness）。
 
 第二步：对过去 W 分钟（W×20 ticks）内的 r_1m 序列做 rolling 偏度，取负
   neg_skew(t) = -skew(r_1m(t-W×20+1 : t))
-  仅统计非 NaN 的 r_1m 值，至少需要 3 个有效值。
+  仅统计非 NaN 的 r_1m 值（window_ok 保证有效比例 ≥ 90%）。
 
 有效性条件
 ----------
@@ -68,8 +68,8 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         # ── window_ok ─────────────────────────────────────────────────────────
         w_ok = window_valid_mask(can_use, w_ok_len, MAX_INVALID_RATIO)
 
-        # ── 第二步：rolling 偏度，min_periods=3 ──────────────────────────────
-        skew = r_1m_series.rolling(w, min_periods=3).skew().to_numpy()
+        # ── 第二步：rolling 偏度 ──────────────────────────────────────────────
+        skew = r_1m_series.rolling(w).skew().to_numpy()
         val  = np.where(w_ok, -skew, np.nan)
 
         # ── has_limit ─────────────────────────────────────────────────────────
