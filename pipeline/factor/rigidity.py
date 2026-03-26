@@ -35,7 +35,6 @@ Rigidity —— 价格刚性因子（Price Rigidity）。
 
 import math
 
-import numba
 import numpy as np
 import pandas as pd
 
@@ -46,8 +45,7 @@ MAX_INVALID_RATIO = 0.10
 EPS               = 1e-8
 
 
-@numba.njit(cache=True)
-def _rigidity_window(price, valid_tick, w_ok, w, eps):
+def _rigidity_window_impl(price, valid_tick, w_ok, w, eps):
     """
     对单只股票单日数据计算单个窗口大小的 rigidity 序列。
 
@@ -133,6 +131,17 @@ def _rigidity_window(price, valid_tick, w_ok, w, eps):
         val[t] = b_coef * r2 * math.log(1.0 / (abs(c_coef) + eps))
 
     return val
+
+
+# numba JIT 编译版本，第一次调用时才初始化，避免主进程 fork 前加载 LLVM
+_rigidity_window_compiled = None
+
+def _rigidity_window(price, valid_tick, w_ok, w, eps):
+    global _rigidity_window_compiled
+    if _rigidity_window_compiled is None:
+        import numba
+        _rigidity_window_compiled = numba.njit(cache=True)(_rigidity_window_impl)
+    return _rigidity_window_compiled(price, valid_tick, w_ok, w, eps)
 
 
 def compute(df: pd.DataFrame) -> pd.DataFrame:

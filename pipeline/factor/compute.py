@@ -118,26 +118,52 @@ def run_factors(
                 factor_name,
             ))
 
-    if max_workers == 1:
-        iter_ = tqdm(all_tasks, desc="factors") if tqdm else all_tasks
-        results = [_worker(t) for t in iter_]
-    else:
-        with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            futs  = [pool.submit(_worker, t) for t in all_tasks]
-            iter_ = tqdm(as_completed(futs), total=len(futs), desc="factors") \
-                    if tqdm else as_completed(futs)
-            results = [f.result() for f in iter_]
+    # 按交易日分组，避免一次性提交数十万任务导致 Future 对象堆积卡死
+    from itertools import groupby
+    tasks_by_day = {
+        day: list(group)
+        for day, group in groupby(all_tasks, key=lambda t: t[0])
+    }
 
-    day_map = defaultdict(list)
-    for r in results:
-        day_map[r["Date"]].append(r)
-    for day, day_results in sorted(day_map.items()):
-        out_day_dir = os.path.join(factor_out_root, day)
+    def _write_day_summary(day_results, out_day_dir):
         os.makedirs(out_day_dir, exist_ok=True)
         pd.DataFrame(day_results).sort_values("SecurityID").reset_index(drop=True) \
           .to_csv(os.path.join(out_day_dir, "_summary.csv"), index=False)
 
+    if max_workers == 1:
+        iter_ = tqdm(all_tasks, desc="factors") if tqdm else all_tasks
+        for day, group in groupby(iter_, key=lambda t: t[0]):
+            day_results = [_worker(t) for t in group]
+            _write_day_summary(day_results, os.path.join(factor_out_root, day))
+    else:
+        pbar = tqdm(total=len(all_tasks), desc="factors") if tqdm else None
+        pool = ProcessPoolExecutor(max_workers=max_workers)
+        try:
+            for day, day_tasks in tasks_by_day.items():
+                futs = [pool.submit(_worker, t) for t in day_tasks]
+                day_results = []
+                for f in as_completed(futs):
+                    day_results.append(f.result())
+                    if pbar:
+                        pbar.update(1)
+                _write_day_summary(day_results, os.path.join(factor_out_root, day))
+        finally:
+            # SIGTERM 直接杀掉 worker，跳过 Python/LLVM 清理，避免 numba 导入引发的退出死锁
+            for p in pool._processes.values():
+                p.terminate()
+            pool.shutdown(wait=False)
+        if pbar:
+            pbar.close()
+
+    # 全局汇总：拼接各天已写好的 per-day summary（比从内存 dict 构建快）
     summary_path = os.path.join(factor_out_root, "_summary.csv")
-    pd.DataFrame(results).sort_values(["Date", "SecurityID"]).reset_index(drop=True) \
-      .to_csv(summary_path, index=False)
+    day_dirs = sorted(
+        d for d in os.listdir(factor_out_root)
+        if len(d) == 8 and d.isdigit()
+    )
+    pd.concat(
+        [pd.read_csv(os.path.join(factor_out_root, d, "_summary.csv"), dtype=str)
+         for d in day_dirs],
+        ignore_index=True,
+    ).to_csv(summary_path, index=False)
     print(f"因子计算完成，汇总：{summary_path}")
