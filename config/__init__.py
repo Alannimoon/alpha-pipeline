@@ -4,40 +4,24 @@
 """
 import os
 
-# 项目根目录（config/ 的上一级）
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# ── 数据路径 ────────────────────────────────────────────────────────────────
-# 原始快照数据：ROOT/data/20250102/000001.csv, ROOT/data/20250103/...
-RAW_ROOT = os.path.join(ROOT, "data")
+# ── 数据路径 ─────────────────────────────────────────────────────────────────
+# 原始分钟线数据：data_min/{secid}.csv（每只股票一个文件，含全年数据）
+# 服务器路径示例：/data3/aiquanta/data/1min_data/2022
+DATA_ROOT   = os.path.join(ROOT, "data_min")
 
-# 各处理阶段的输出目录
-SAMPLED_ROOT  = os.path.join(ROOT, "result", "sampled")
-CLEANED_ROOT  = os.path.join(ROOT, "result", "cleaned")
-BASE_ROOT     = os.path.join(ROOT, "result", "base")
-
-# ── 采样参数 ────────────────────────────────────────────────────────────────
-SAMPLE_FREQ = "3s"
-
-# ── 交易时段 ────────────────────────────────────────────────────────────────
-# 采样网格范围，均使用左闭右开区间，即不包含 11:30:00 和 14:57:00
-AM_START = "09:30:00"
-AM_END   = "11:30:00"   # 不含
-PM_START = "13:00:00"
-PM_END   = "14:57:00"   # 不含
-
-# ── 清洗参数 ────────────────────────────────────────────────────────────────
-# 人工确认的异常股票日列表（不删除时留空即可，文件可以只有注释行）
-DROP_OVERRIDES_CSV = os.path.join(ROOT, "config", "drop_overrides.csv")
-
-# MaxGapSec 超过此值的保留股票日会被输出到 _gap_review.csv 供人工复核（不自动删除）
-GAP_REVIEW_THRESHOLD = 60.0
-
-# ── 收益率参数 ───────────────────────────────────────────────────────────────
-# 前向收益率窗口（单位：tick，3s/tick）
-# 100 tick = 5分钟，200 tick = 10分钟，300 tick = 15分钟
-RETURN_HORIZONS = [100, 200, 300]
-
-# ── 因子参数 ─────────────────────────────────────────────────────────────────
+BASE_ROOT   = os.path.join(ROOT, "result", "base")
 FACTOR_ROOT = os.path.join(ROOT, "result", "factor")
 EVAL_ROOT   = os.path.join(ROOT, "result", "eval")
+
+# ── 收益率参数 ────────────────────────────────────────────────────────────────
+# 前向收益率窗口（单位：tick，1 min/tick）
+RETURN_HORIZONS = [5, 10, 15]
+
+# 窗口名 → 列名映射（供 eval 模块使用）
+RET_HORIZONS_MAP = {
+    "ret5":  "ret_fwd_5",
+    "ret10": "ret_fwd_10",
+    "ret15": "ret_fwd_15",
+}

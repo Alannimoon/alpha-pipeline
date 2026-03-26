@@ -29,7 +29,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-_RET_HORIZONS = ["ret100", "ret200", "ret300"]
+_RET_HORIZONS_DEFAULT = ["ret100", "ret200", "ret300"]
+
+# 向后兼容别名
+_RET_HORIZONS = _RET_HORIZONS_DEFAULT
 
 # (session, ic_col, icir_col, color, linestyle, label_prefix)
 _LINE_STYLES = [
@@ -79,7 +82,7 @@ def _plot_one(stats_df: pd.DataFrame, ret_h: str, ic_type: str, out_path: str, f
     plt.close(fig)
 
 
-def run_ic_plot(eval_root: str, factor_name: str):
+def run_ic_plot(eval_root: str, factor_name: str, ret_horizons: list | None = None):
     stats_dir = os.path.join(eval_root, "ic_stats", factor_name)
 
     cs_path = os.path.join(stats_dir, "cs_ic_stats.csv")
@@ -93,7 +96,8 @@ def run_ic_plot(eval_root: str, factor_name: str):
     cs_df = pd.read_csv(cs_path)
     ts_df = pd.read_csv(ts_path)
 
-    for ret_h in _RET_HORIZONS:
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
+    for ret_h in horizons:
         # CS
         out = os.path.join(stats_dir, f"cs_{ret_h}.png")
         _plot_one(cs_df, ret_h, "cs", out, factor_name)

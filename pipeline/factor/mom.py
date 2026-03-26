@@ -1,45 +1,20 @@
 """
-Mom —— 价格动量因子（Price Momentum）。
+Mom（分钟线版）—— 价格动量因子。
 
-定义
-----
-  mom_raw(t) = ln(P(t)) - ln(P(t-W))
-
-有效性条件
-----------
-  1. CanUsePrice(t)   = True
-  2. CanUsePrice(t-W) = True
-  两者同时满足则计算，否则 NaN。
-  无窗口质量检查，允许跨午休。
-
-附加输出
---------
-  mom_{W}m_has_limit(t)：当前 tick 或 W 个 tick 前是否为涨跌停 tick
-    （IsLimitTick = CanUsePrice=True & CanUseDoubleSideBook=False）
-    仅检查两个端点，中间 tick 不考虑。
-    与 BAP 不同，涨跌停 tick 的 CanUsePrice=True，动量值可以算出，
-    但价格受限制，信号失真，has_limit=True 供下游（ts_ic）掩码使用。
-
-窗口
-----
-  [5, 10, 20, 30, 45, 60, 90] 分钟，即 [100, 200, 400, 600, 900, 1200, 1800] tick
+与快照版完全相同的逻辑，窗口单位改为 1 min/tick。
+TICKS_PER_MIN = 1，所以窗口 tick 数 = 分钟数。
 """
 
 import numpy as np
 import pandas as pd
 
-from ._core import TICKS_PER_MIN, is_limit_tick
+from ._core import is_limit_tick
 
-WINDOWS_MIN = [5, 10, 20, 30, 45, 60, 90]
+TICKS_PER_MIN = 1
+WINDOWS_MIN   = [5, 10, 20, 30, 45, 60, 90]
 
 
 def compute(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
-    输出：只含因子列的 DataFrame，index 与输入对齐
-
-    列名：mom_5m, mom_5m_has_limit, mom_10m, mom_10m_has_limit, ...
-    """
     can_use = df["CanUsePrice"].to_numpy(bool)
     log_p   = np.where(can_use, np.log(df["Price"].to_numpy(np.float64)), np.nan)
     limit   = is_limit_tick(df)

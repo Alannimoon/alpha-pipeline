@@ -48,11 +48,14 @@ except ImportError:
 
 from ._panel import get_factor_cols
 
-_RET_HORIZONS = {
+_RET_HORIZONS_DEFAULT = {
     "ret100": "ret_fwd_100",
     "ret200": "ret_fwd_200",
     "ret300": "ret_fwd_300",
 }
+
+# 向后兼容别名
+_RET_HORIZONS = _RET_HORIZONS_DEFAULT
 
 
 # ── 1D 相关系数工具 ───────────────────────────────────────────────────────────
@@ -95,6 +98,7 @@ def _compute_day(
     factor_root: str,
     factor_name: str,
     day: str,
+    ret_horizons: dict | None = None,
 ) -> dict[str, pd.DataFrame]:
     """
     逐股票文件读取，直接对列计算 TS-IC，返回各 (horizon, session) 的 DataFrame。
@@ -102,6 +106,8 @@ def _compute_day(
     每只股票贡献 9 行（3 horizon × 3 session），每行一个字典追加到对应列表，
     最后一次性转成 DataFrame，避免行拼接开销。
     """
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
+
     day_dir = os.path.join(factor_root, factor_name, day)
     files = sorted(
         f for f in os.listdir(day_dir)
@@ -110,7 +116,7 @@ def _compute_day(
 
     # 每个 (horizon, session) 组合积累一个 row 列表
     rows: dict[str, list[dict]] = {
-        f"{h}_{s}": [] for h in _RET_HORIZONS for s in ("all", "am", "pm")
+        f"{h}_{s}": [] for h in horizons for s in ("all", "am", "pm")
     }
 
     for fname in files:
@@ -140,7 +146,7 @@ def _compute_day(
             "pm":  df[times >= "13:00:00"],
         }
 
-        for h_key, h_col in _RET_HORIZONS.items():
+        for h_key, h_col in horizons.items():
             for sess_name, sub in sessions.items():
                 if sub.empty:
                     continue
@@ -163,8 +169,8 @@ def _compute_day(
 
 def _worker(args) -> str:
     """ProcessPoolExecutor worker，处理单日 TS-IC 并写文件。"""
-    factor_root, base_dir, factor_name, day = args
-    day_results = _compute_day(factor_root, factor_name, day)
+    factor_root, base_dir, factor_name, day, ret_horizons = args
+    day_results = _compute_day(factor_root, factor_name, day, ret_horizons)
     for key, df in day_results.items():
         out_dir = os.path.join(base_dir, key)
         os.makedirs(out_dir, exist_ok=True)
@@ -178,18 +184,22 @@ def run_ts_ic(
     factor_name: str,
     dates: list[str] | None = None,
     max_workers: int | None = None,
+    ret_horizons: dict | None = None,
 ):
     """
     批量计算时序 IC。
 
     Parameters
     ----------
-    factor_root : 因子数据根目录
-    eval_root   : 评估结果输出根目录
-    factor_name : 因子名称，如 "bap"
-    dates       : 指定日期列表；None 时自动扫描
-    max_workers : 并行进程数；None 表示使用 CPU 核数
+    factor_root  : 因子数据根目录
+    eval_root    : 评估结果输出根目录
+    factor_name  : 因子名称，如 "bap"
+    dates        : 指定日期列表；None 时自动扫描
+    max_workers  : 并行进程数；None 表示使用 CPU 核数
+    ret_horizons : 收益率窗口映射；None 使用默认
     """
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
+
     if dates is None:
         factor_day_root = os.path.join(factor_root, factor_name)
         dates = sorted(
@@ -199,7 +209,7 @@ def run_ts_ic(
         )
 
     base_dir = os.path.join(eval_root, "ts_ic", factor_name)
-    tasks = [(factor_root, base_dir, factor_name, day) for day in dates]
+    tasks = [(factor_root, base_dir, factor_name, day, horizons) for day in dates]
 
     if max_workers == 1:
         day_iter = tqdm(tasks, desc="TS-IC") if tqdm else tasks

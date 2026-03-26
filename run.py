@@ -1,104 +1,73 @@
 """
-统一入口。
+因子评测流水线统一入口。
 
 用法
 ----
-python run.py sample   --date 20250102              # 重采样
-python run.py clean    --date 20250102              # 清洗
-python run.py base     --date 20250102              # 生成 base 数据（价格、掩码）
-python run.py factors  --date 20250102              # 计算因子（含内联收益率）
-python run.py cs_ic    --date 20250102 --factor bap # 截面 IC
-python run.py ts_ic    --date 20250102 --factor bap # 时序 IC
-python run.py ic_stats --factor bap                 # IC 汇总统计
-python run.py ic_plot  --factor bap                 # IC 画图
+python run.py base                      # 加载分钟线数据，生成 base 文件
+python run.py factors --factor mom      # 计算因子（含内联前向收益率）
+python run.py cs_ic   --factor mom      # 截面 IC
+python run.py ts_ic   --factor mom      # 时序 IC
+python run.py ic_stats --factor mom     # IC 汇总统计
+python run.py ic_plot  --factor mom     # IC 画图
+
+可用因子：mom, acc_mom, neg_skew, amp_slice, rigidity, pv_corr
+
+数据路径（见 config/__init__.py）：
+  输入：DATA_ROOT/*.csv
+  输出：result/base/  result/factor/  result/eval/
 """
 
 import argparse
 import sys
 
 import config
-from pipeline.ingest.sample  import run_sample
-from pipeline.ingest.clean   import run_clean
-from pipeline.ingest.base    import run_base
+from pipeline.ingest.load   import run_load
 from pipeline.factor.compute import run_factors
-from pipeline.eval.cs_ic       import run_cs_ic
-from pipeline.eval.ts_ic       import run_ts_ic
-from pipeline.eval.ic_stats    import run_ic_stats
-from pipeline.eval.ic_plot     import run_ic_plot
-from pipeline.eval.cs_quantile import run_cs_quantile, run_cs_quantile_chart
+from pipeline.eval.cs_ic    import run_cs_ic
+from pipeline.eval.ts_ic    import run_ts_ic
+from pipeline.eval.ic_stats import run_ic_stats
+from pipeline.eval.ic_plot  import run_ic_plot
+
+_FACTORS = ["mom", "acc_mom", "neg_skew", "amp_slice", "rigidity", "pv_corr"]
 
 
 def main():
     parser = argparse.ArgumentParser(prog="run.py", description="因子评测流水线")
     sub = parser.add_subparsers(dest="stage", required=True)
 
-    # ── 公共参数 ───────────────────────────────────────────────────────────
     def add_common(p):
-        p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
+        p.add_argument("--date",    default=None, help="只处理指定日期，如 20220104")
         p.add_argument("--workers", type=int, default=None, help="并行进程数（默认 CPU 核数）")
 
     def add_eval(p):
-        p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
-        p.add_argument("--factor",  default="bap", help="因子名称，如 bap")
-        p.add_argument("--workers", type=int, default=None, help="并行进程数（默认 CPU 核数）")
+        p.add_argument("--date",    default=None)
+        p.add_argument("--factor",  default="mom", help=f"可选：{_FACTORS}")
+        p.add_argument("--workers", type=int, default=None)
 
     def add_factor_only(p):
-        p.add_argument("--factor", default="bap", help="因子名称，如 bap")
+        p.add_argument("--factor", default="mom", help=f"可选：{_FACTORS}")
 
-    # ── sample ─────────────────────────────────────────────────────────────
-    add_common(sub.add_parser("sample",  help="重采样：原始快照 → 固定时间网格"))
+    p_base = sub.add_parser("base", help="加载分钟线数据，生成 base 文件")
+    p_base.add_argument("--data",    default=None, help="覆盖 DATA_ROOT，如 /data3/aiquanta/data/1min_data/2022")
+    p_base.add_argument("--workers", type=int, default=None)
 
-    # ── clean ──────────────────────────────────────────────────────────────
-    add_common(sub.add_parser("clean",   help="清洗：删停牌日，标记大间隔待复核"))
-
-    # ── base ───────────────────────────────────────────────────────────────
-    add_common(sub.add_parser("base",    help="Base：价格定义、涨跌停标注、盘口掩码"))
-
-    # ── factors ────────────────────────────────────────────────────────────
-    p_factors = sub.add_parser("factors", help="因子：计算指定因子（含内联收益率）")
+    p_factors = sub.add_parser("factors", help="计算因子（含内联前向收益率）")
     add_common(p_factors)
-    p_factors.add_argument("--factor", default="bap", help="因子名称，如 bap / mom")
+    p_factors.add_argument("--factor", default="mom", help=f"可选：{_FACTORS}")
 
-    # ── cs_ic ──────────────────────────────────────────────────────────────
-    add_eval(sub.add_parser("cs_ic",   help="截面 IC：按 (Date, SampleTime) 分组"))
+    add_eval(sub.add_parser("cs_ic",   help="截面 IC"))
+    add_eval(sub.add_parser("ts_ic",   help="时序 IC"))
+    add_factor_only(sub.add_parser("ic_stats", help="IC 汇总统计"))
+    add_factor_only(sub.add_parser("ic_plot",  help="IC 画图"))
 
-    # ── ts_ic ──────────────────────────────────────────────────────────────
-    add_eval(sub.add_parser("ts_ic",   help="时序 IC：按 (Date, SecurityID) 分组"))
-
-    # ── ic_stats ───────────────────────────────────────────────────────────
-    add_factor_only(sub.add_parser("ic_stats", help="IC 汇总统计：均值、标准差、ICIR"))
-
-    # ── ic_plot ────────────────────────────────────────────────────────────
-    add_factor_only(sub.add_parser("ic_plot",  help="IC 画图：6 张图（CS/TS × 3 ret horizon）"))
-
-    # ── cs_quantile ────────────────────────────────────────────────────────────
-    add_eval(sub.add_parser("cs_quantile", help="截面分层：五分位组收益均值"))
-
-    # ── cs_quantile_chart ──────────────────────────────────────────────────────
-    add_factor_only(sub.add_parser("cs_quantile_chart", help="重新生成截面分层跨日 tick 图（不重跑分层计算）"))
-
-    args = parser.parse_args()
+    args  = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
 
-    if args.stage == "sample":
-        run_sample(
-            raw_root=config.RAW_ROOT, sampled_root=config.SAMPLED_ROOT,
-            dates=dates, freq=config.SAMPLE_FREQ,
-            am_start=config.AM_START, am_end=config.AM_END,
-            pm_start=config.PM_START, pm_end=config.PM_END,
+    if args.stage == "base":
+        run_load(
+            data_root=getattr(args, "data", None) or config.DATA_ROOT,
+            base_root=config.BASE_ROOT,
             max_workers=args.workers,
-        )
-    elif args.stage == "clean":
-        run_clean(
-            sampled_root=config.SAMPLED_ROOT, cleaned_root=config.CLEANED_ROOT,
-            override_csv=config.DROP_OVERRIDES_CSV,
-            gap_threshold=config.GAP_REVIEW_THRESHOLD,
-            dates=dates, max_workers=args.workers,
-        )
-    elif args.stage == "base":
-        run_base(
-            cleaned_root=config.CLEANED_ROOT, base_root=config.BASE_ROOT,
-            dates=dates, max_workers=args.workers,
         )
     elif args.stage == "factors":
         run_factors(
@@ -106,42 +75,38 @@ def main():
             factor_root=config.FACTOR_ROOT,
             factor_name=args.factor,
             horizons=config.RETURN_HORIZONS,
-            dates=dates, max_workers=args.workers,
+            dates=dates,
+            max_workers=args.workers,
         )
     elif args.stage == "cs_ic":
         run_cs_ic(
-            factor_root=config.FACTOR_ROOT, eval_root=config.EVAL_ROOT,
-            factor_name=args.factor, dates=dates,
-            max_workers=getattr(args, "workers", None),
-        )
-    elif args.stage == "ts_ic":
-        run_ts_ic(
-            factor_root=config.FACTOR_ROOT, eval_root=config.EVAL_ROOT,
-            factor_name=args.factor, dates=dates,
-            max_workers=getattr(args, "workers", None),
-        )
-    elif args.stage == "ic_stats":
-        run_ic_stats(
-            eval_root=config.EVAL_ROOT,
-            factor_name=args.factor,
-        )
-    elif args.stage == "ic_plot":
-        run_ic_plot(
-            eval_root=config.EVAL_ROOT,
-            factor_name=args.factor,
-        )
-    elif args.stage == "cs_quantile":
-        run_cs_quantile(
             factor_root=config.FACTOR_ROOT,
             eval_root=config.EVAL_ROOT,
             factor_name=args.factor,
             dates=dates,
             max_workers=getattr(args, "workers", None),
+            ret_horizons=config.RET_HORIZONS_MAP,
         )
-    elif args.stage == "cs_quantile_chart":
-        run_cs_quantile_chart(
+    elif args.stage == "ts_ic":
+        run_ts_ic(
+            factor_root=config.FACTOR_ROOT,
             eval_root=config.EVAL_ROOT,
             factor_name=args.factor,
+            dates=dates,
+            max_workers=getattr(args, "workers", None),
+            ret_horizons=config.RET_HORIZONS_MAP,
+        )
+    elif args.stage == "ic_stats":
+        run_ic_stats(
+            eval_root=config.EVAL_ROOT,
+            factor_name=args.factor,
+            ret_horizons=list(config.RET_HORIZONS_MAP.keys()),
+        )
+    elif args.stage == "ic_plot":
+        run_ic_plot(
+            eval_root=config.EVAL_ROOT,
+            factor_name=args.factor,
+            ret_horizons=list(config.RET_HORIZONS_MAP.keys()),
         )
     else:
         parser.print_help()

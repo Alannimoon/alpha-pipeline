@@ -50,8 +50,11 @@ def _parse_window(fc: str, factor_name: str) -> int:
     m = re.search(r'\d+', suffix)
     return int(m.group()) if m else 0
 
-_RET_HORIZONS = ["ret100", "ret200", "ret300"]
-_SESSIONS     = ["all", "am", "pm"]
+_RET_HORIZONS_DEFAULT = ["ret100", "ret200", "ret300"]
+_SESSIONS             = ["all", "am", "pm"]
+
+# 向后兼容别名
+_RET_HORIZONS = _RET_HORIZONS_DEFAULT
 
 
 # ── CS-IC ─────────────────────────────────────────────────────────────────────
@@ -100,7 +103,7 @@ def _cs_stats_one(csv_dir: str, factor_cols: list[str]) -> dict:
     return rows
 
 
-def compute_cs_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
+def compute_cs_stats(eval_root: str, factor_name: str, ret_horizons: list | None = None) -> pd.DataFrame:
     base_dir = os.path.join(eval_root, "cs_ic", factor_name)
 
     # 从第一个可用文件推断因子列名
@@ -116,8 +119,9 @@ def compute_cs_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
     sample_df = pd.read_csv(first_file, nrows=0)
     factor_cols = [c[3:] for c in sample_df.columns if c.startswith("ic_")]
 
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
     records = []
-    for ret_h in _RET_HORIZONS:
+    for ret_h in horizons:
         for sess in _SESSIONS:
             csv_dir = os.path.join(base_dir, f"{ret_h}_{sess}")
             stats = _cs_stats_one(csv_dir, factor_cols)
@@ -187,7 +191,7 @@ def _ts_stats_one(csv_dir: str, factor_cols: list[str]) -> dict:
     return rows
 
 
-def compute_ts_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
+def compute_ts_stats(eval_root: str, factor_name: str, ret_horizons: list | None = None) -> pd.DataFrame:
     base_dir = os.path.join(eval_root, "ts_ic", factor_name)
 
     first_file = next(
@@ -202,8 +206,9 @@ def compute_ts_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
     sample_df = pd.read_csv(first_file, nrows=0)
     factor_cols = [c[6:] for c in sample_df.columns if c.startswith("ts_ic_")]
 
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
     records = []
-    for ret_h in _RET_HORIZONS:
+    for ret_h in horizons:
         for sess in _SESSIONS:
             csv_dir = os.path.join(base_dir, f"{ret_h}_{sess}")
             stats = _ts_stats_one(csv_dir, factor_cols)
@@ -219,16 +224,16 @@ def compute_ts_stats(eval_root: str, factor_name: str) -> pd.DataFrame:
 
 # ── 批量入口 ──────────────────────────────────────────────────────────────────
 
-def run_ic_stats(eval_root: str, factor_name: str):
+def run_ic_stats(eval_root: str, factor_name: str, ret_horizons: list | None = None):
     out_dir = os.path.join(eval_root, "ic_stats", factor_name)
     os.makedirs(out_dir, exist_ok=True)
 
-    cs_df = compute_cs_stats(eval_root, factor_name)
+    cs_df = compute_cs_stats(eval_root, factor_name, ret_horizons)
     cs_path = os.path.join(out_dir, "cs_ic_stats.csv")
     cs_df.to_csv(cs_path, index=False)
     print(f"CS-IC 统计完成：{cs_path}")
 
-    ts_df = compute_ts_stats(eval_root, factor_name)
+    ts_df = compute_ts_stats(eval_root, factor_name, ret_horizons)
     ts_path = os.path.join(out_dir, "ts_ic_stats.csv")
     ts_df.to_csv(ts_path, index=False)
     print(f"TS-IC 统计完成：{ts_path}")

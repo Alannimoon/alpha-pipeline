@@ -1,21 +1,14 @@
 """
-因子计算编排器。
+分钟线因子计算编排器。
 
-如何添加新因子
---------------
-1. 在 pipeline/factor/ 下新建 <name>.py，实现：
-       def compute(df: pd.DataFrame) -> pd.DataFrame:
-           ...  # 输入完整 stock-day df，输出只含因子列的 df
-2. 在本文件的 _FACTOR_MAP 里注册：
-       from . import <name>
-       _FACTOR_MAP = {..., "<name>": <name>}
-
-每个因子单独存入 factor_root/<factor_name>/ 目录，互不干扰。
+注册的因子均为价格/成交量驱动型（不依赖盘口数据），
+可在分钟 OHLCV 数据上运行。
 """
 
 import os
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from itertools import groupby
 
 import pandas as pd
 
@@ -25,32 +18,26 @@ except ImportError:
     tqdm = None
 
 from ._core import load_data
-from . import bap, mom, acc_mom, neg_skew, amp_slice, rigidity, pv_corr, rsrs, oir, ofd
+from . import mom, acc_mom, neg_skew, amp_slice, rigidity, pv_corr
 
-# ── 注册因子 ──────────────────────────────────────────────────────────────────
-# 新增因子：import 后加入此字典即可
 _FACTOR_MAP = {
-    "bap": bap,
-    "mom": mom,
-    "acc_mom": acc_mom,
-    "neg_skew": neg_skew,
+    "mom":       mom,
+    "acc_mom":   acc_mom,
+    "neg_skew":  neg_skew,
     "amp_slice": amp_slice,
-    "rigidity": rigidity,
-    "pv_corr": pv_corr,
-    "rsrs": rsrs,
-    "oir": oir,
-    "ofd": ofd,
+    "rigidity":  rigidity,
+    "pv_corr":   pv_corr,
 }
 
-
-# ── 单股票日计算 ──────────────────────────────────────────────────────────────
 
 def _worker(args) -> dict:
     day, secid, base_path, out_path, horizons, factor_name = args
     try:
-        df      = load_data(base_path, horizons)
-        meta    = df[["Date", "SampleTime", "SecurityID", "Market",
-                      "ret_fwd_100", "ret_fwd_200", "ret_fwd_300"]].copy()
+        df   = load_data(base_path, horizons)
+
+        ret_cols = [f"ret_fwd_{h}" for h in horizons]
+        meta_cols = ["Date", "SampleTime", "SecurityID", "Market"] + ret_cols
+        meta    = df[[c for c in meta_cols if c in df.columns]].copy()
         factors = _FACTOR_MAP[factor_name].compute(df)
         out     = pd.concat([meta, factors], axis=1)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -66,8 +53,6 @@ def _worker(args) -> dict:
         return {"Date": day, "SecurityID": secid, "Status": f"FAIL: {e}"}
 
 
-# ── 批量入口 ──────────────────────────────────────────────────────────────────
-
 def run_factors(
     base_root: str,
     factor_root: str,
@@ -77,19 +62,20 @@ def run_factors(
     max_workers: int | None = None,
 ):
     """
-    批量计算单个因子。收益率在读取 base 文件时内联计算，无需单独的 returns 目录。
+    批量计算分钟线因子。
 
     Parameters
     ----------
-    base_root   : base 数据根目录
-    factor_root : 输出根目录（因子文件写入 factor_root/{factor_name}/{date}/）
+    base_root   : 分钟线 base 数据根目录
+    factor_root : 输出根目录（写入 factor_root/{factor_name}/{date}/）
     factor_name : 因子名称，须在 _FACTOR_MAP 中注册
-    horizons    : 前向收益率窗口列表（tick 数），如 [100, 200, 300]
+    horizons    : 前向收益率窗口（tick 数），如 [5, 10, 15]
     dates       : 指定日期列表；None 时自动扫描
     max_workers : 并行进程数
     """
     if factor_name not in _FACTOR_MAP:
         raise ValueError(f"未知因子 '{factor_name}'，可选：{list(_FACTOR_MAP)}")
+
     factor_out_root = os.path.join(factor_root, factor_name)
     os.makedirs(factor_out_root, exist_ok=True)
 
@@ -104,7 +90,7 @@ def run_factors(
     for day in dates:
         base_day_dir = os.path.join(base_root, day)
         out_day_dir  = os.path.join(factor_out_root, day)
-        stock_files = sorted(
+        stock_files  = sorted(
             f for f in os.listdir(base_day_dir)
             if f.endswith(".csv") and not f.startswith("_")
         )
@@ -118,8 +104,6 @@ def run_factors(
                 factor_name,
             ))
 
-    # 按交易日分组，避免一次性提交数十万任务导致 Future 对象堆积卡死
-    from itertools import groupby
     tasks_by_day = {
         day: list(group)
         for day, group in groupby(all_tasks, key=lambda t: t[0])
@@ -148,14 +132,13 @@ def run_factors(
                         pbar.update(1)
                 _write_day_summary(day_results, os.path.join(factor_out_root, day))
         finally:
-            # SIGTERM 直接杀掉 worker，跳过 Python/LLVM 清理，避免 numba 导入引发的退出死锁
             for p in pool._processes.values():
                 p.terminate()
             pool.shutdown(wait=False)
         if pbar:
             pbar.close()
 
-    # 全局汇总：拼接各天已写好的 per-day summary（比从内存 dict 构建快）
+    # 全局汇总
     summary_path = os.path.join(factor_out_root, "_summary.csv")
     day_dirs = sorted(
         d for d in os.listdir(factor_out_root)
@@ -166,4 +149,4 @@ def run_factors(
          for d in day_dirs],
         ignore_index=True,
     ).to_csv(summary_path, index=False)
-    print(f"因子计算完成，汇总：{summary_path}")
+    print(f"分钟线因子计算完成，汇总：{summary_path}")

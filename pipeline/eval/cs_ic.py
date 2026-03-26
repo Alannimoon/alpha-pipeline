@@ -53,17 +53,21 @@ except ImportError:
 
 from ._panel import get_factor_cols, compute_ic_pair
 
-_RET_HORIZONS = {
+_RET_HORIZONS_DEFAULT = {
     "ret100": "ret_fwd_100",
     "ret200": "ret_fwd_200",
     "ret300": "ret_fwd_300",
 }
+
+# 向后兼容别名
+_RET_HORIZONS = _RET_HORIZONS_DEFAULT
 
 
 def _build_wide_tables(
     factor_root: str,
     factor_name: str,
     day: str,
+    ret_horizons: dict | None = None,
 ) -> tuple[dict[str, pd.DataFrame], list[str]]:
     """
     逐文件读取，直接构建宽表，返回 (wide, factor_cols)。
@@ -79,12 +83,14 @@ def _build_wide_tables(
     if not files:
         return {}, []
 
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
+
     # 读第一个文件的列头，确定因子列名
     first_cols = pd.read_csv(
         os.path.join(day_dir, files[0]), nrows=0,
     ).columns.tolist()
     factor_cols = get_factor_cols(pd.DataFrame(columns=first_cols), factor_name)
-    ret_cols    = list(_RET_HORIZONS.values())
+    ret_cols    = list(horizons.values())
     needed_cols = ["SampleTime", "SecurityID"] + factor_cols + ret_cols
 
     # 逐文件积累：{col: {secid: Series(SampleTime → value)}}
@@ -117,6 +123,7 @@ def _compute_day(
     factor_root: str,
     factor_name: str,
     day: str,
+    ret_horizons: dict | None = None,
 ) -> dict[str, pd.DataFrame]:
     """
     对单日数据计算所有 (ret_horizon, session) 组合的 CS-IC。
@@ -124,13 +131,14 @@ def _compute_day(
     IC 只对全天宽表算一次，再按 SampleTime 切行得到 am / pm 子集。
     返回 {"{ret_horizon}_{session}": DataFrame}。
     """
-    wide, factor_cols = _build_wide_tables(factor_root, factor_name, day)
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
+    wide, factor_cols = _build_wide_tables(factor_root, factor_name, day, horizons)
     if not wide or not factor_cols:
         return {}
 
     results: dict[str, pd.DataFrame] = {}
 
-    for h_key, h_col in _RET_HORIZONS.items():
+    for h_key, h_col in horizons.items():
         r_wide = wide[h_col]
 
         # 计算全天 IC（axis=1：每行跨所有股票做相关）
@@ -163,8 +171,8 @@ def _compute_day(
 def _worker(args) -> str:
     """ProcessPoolExecutor worker，处理单日 CS-IC 并写文件。"""
     warnings.filterwarnings("ignore", category=RuntimeWarning)
-    factor_root, base_dir, factor_name, day = args
-    day_results = _compute_day(factor_root, factor_name, day)
+    factor_root, base_dir, factor_name, day, ret_horizons = args
+    day_results = _compute_day(factor_root, factor_name, day, ret_horizons)
     for key, df in day_results.items():
         out_dir = os.path.join(base_dir, key)
         os.makedirs(out_dir, exist_ok=True)
@@ -178,18 +186,23 @@ def run_cs_ic(
     factor_name: str,
     dates: list[str] | None = None,
     max_workers: int | None = None,
+    ret_horizons: dict | None = None,
 ):
     """
     批量计算截面 IC。
 
     Parameters
     ----------
-    factor_root : 因子数据根目录（含各日期子目录）
-    eval_root   : 评估结果输出根目录
-    factor_name : 因子名称，如 "bap"
-    dates       : 指定日期列表；None 时自动扫描
-    max_workers : 并行进程数；None 表示使用 CPU 核数
+    factor_root  : 因子数据根目录（含各日期子目录）
+    eval_root    : 评估结果输出根目录
+    factor_name  : 因子名称，如 "bap"
+    dates        : 指定日期列表；None 时自动扫描
+    max_workers  : 并行进程数；None 表示使用 CPU 核数
+    ret_horizons : 收益率窗口映射，如 {"ret5": "ret_fwd_5", ...}；
+                   None 使用默认 {"ret100": "ret_fwd_100", ...}
     """
+    horizons = ret_horizons if ret_horizons is not None else _RET_HORIZONS_DEFAULT
+
     if dates is None:
         factor_day_root = os.path.join(factor_root, factor_name)
         dates = sorted(
@@ -199,7 +212,7 @@ def run_cs_ic(
         )
 
     base_dir = os.path.join(eval_root, "cs_ic", factor_name)
-    tasks = [(factor_root, base_dir, factor_name, day) for day in dates]
+    tasks = [(factor_root, base_dir, factor_name, day, horizons) for day in dates]
 
     if max_workers == 1:
         day_iter = tqdm(tasks, desc="CS-IC") if tqdm else tasks
