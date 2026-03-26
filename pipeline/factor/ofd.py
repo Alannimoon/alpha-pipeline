@@ -71,8 +71,9 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     ask_diff = askp[:, 1:]  - askp[:, :-1]
     bid_cnt  = np.isfinite(bid_diff).sum(axis=1).astype(np.float64)
     ask_cnt  = np.isfinite(ask_diff).sum(axis=1).astype(np.float64)
-    avg_bid_spread = np.where(bid_cnt > 0, np.nansum(bid_diff, axis=1) / bid_cnt, np.nan)
-    avg_ask_spread = np.where(ask_cnt > 0, np.nansum(ask_diff, axis=1) / ask_cnt, np.nan)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        avg_bid_spread = np.where(bid_cnt > 0, np.nansum(bid_diff, axis=1) / bid_cnt, np.nan)
+        avg_ask_spread = np.where(ask_cnt > 0, np.nansum(ask_diff, axis=1) / ask_cnt, np.nan)
 
     total_bidv = np.nansum(bidv, axis=1)
     total_askv = np.nansum(askv, axis=1)
