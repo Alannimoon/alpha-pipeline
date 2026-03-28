@@ -285,9 +285,11 @@ def _composite_and_groups(
         weight_sum[valid_mask]  += abs(w)
 
     # 权重补偿：当某只股票某时刻有部分因子缺失时，归一化到实际有效权重
-    # （若全部因子均缺失则保持 0，后续视为 NaN）
-    can_use = weight_sum > 1e-9
-    composite = np.where(can_use, composite / weight_sum, np.nan)
+    # （若全部因子均缺失则置 NaN）
+    # 用 safe_denom 避免 np.where 两分支均求值时触发除零警告
+    can_use    = weight_sum > 1e-9
+    safe_denom = np.where(can_use, weight_sum, 1.0)
+    composite  = np.where(can_use, composite / safe_denom, np.nan)
 
     # 收益率矩阵
     r_mat = r_wide.to_numpy(np.float64)
