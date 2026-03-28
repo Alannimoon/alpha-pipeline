@@ -11,6 +11,7 @@ python run.py cs_ic    --date 20250102 --factor bap # 截面 IC
 python run.py ts_ic    --date 20250102 --factor bap # 时序 IC
 python run.py ic_stats --factor bap                 # IC 汇总统计
 python run.py ic_plot  --factor bap                 # IC 画图
+python run.py multi_factor_quantile                 # 多因子合成分层（十分位）
 """
 
 import argparse
@@ -25,7 +26,8 @@ from pipeline.eval.cs_ic       import run_cs_ic
 from pipeline.eval.ts_ic       import run_ts_ic
 from pipeline.eval.ic_stats    import run_ic_stats
 from pipeline.eval.ic_plot     import run_ic_plot
-from pipeline.eval.cs_quantile import run_cs_quantile, run_cs_quantile_chart
+from pipeline.eval.cs_quantile          import run_cs_quantile, run_cs_quantile_chart
+from pipeline.eval.multi_factor_quantile import run_multi_factor_quantile
 
 
 def main():
@@ -76,6 +78,12 @@ def main():
 
     # ── cs_quantile_chart ──────────────────────────────────────────────────────
     add_factor_only(sub.add_parser("cs_quantile_chart", help="重新生成截面分层跨日 tick 图（不重跑分层计算）"))
+
+    # ── multi_factor_quantile ──────────────────────────────────────────────────
+    p_mfq = sub.add_parser("multi_factor_quantile", help="多因子合成分层：IC 加权十分位")
+    p_mfq.add_argument("--date",      default=None,  help="只处理指定日期，如 20250102")
+    p_mfq.add_argument("--workers",   type=int, default=None, help="并行进程数（默认 CPU 核数）")
+    p_mfq.add_argument("--threshold", type=float, default=0.02, help="IC 筛选阈值（默认 0.02）")
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -142,6 +150,15 @@ def main():
         run_cs_quantile_chart(
             eval_root=config.EVAL_ROOT,
             factor_name=args.factor,
+        )
+    elif args.stage == "multi_factor_quantile":
+        run_multi_factor_quantile(
+            factor_root=config.FACTOR_ROOT,
+            eval_root=config.EVAL_ROOT,
+            ic_stats_root=config.IC_STATS_ROOT,
+            threshold=args.threshold,
+            dates=dates,
+            max_workers=args.workers,
         )
     else:
         parser.print_help()

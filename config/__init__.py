@@ -39,5 +39,6 @@ GAP_REVIEW_THRESHOLD = 60.0
 RETURN_HORIZONS = [100, 200, 300]
 
 # ── 因子参数 ─────────────────────────────────────────────────────────────────
-FACTOR_ROOT = os.path.join(ROOT, "result", "factor")
-EVAL_ROOT   = os.path.join(ROOT, "result", "eval")
+FACTOR_ROOT    = os.path.join(ROOT, "result", "factor")
+EVAL_ROOT      = os.path.join(ROOT, "result", "eval")
+IC_STATS_ROOT  = os.path.join(ROOT, "result", "eval", "ic_stats")
