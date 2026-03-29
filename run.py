@@ -26,8 +26,9 @@ from pipeline.eval.cs_ic       import run_cs_ic
 from pipeline.eval.ts_ic       import run_ts_ic
 from pipeline.eval.ic_stats    import run_ic_stats
 from pipeline.eval.ic_plot     import run_ic_plot
-from pipeline.eval.cs_quantile          import run_cs_quantile, run_cs_quantile_chart
-from pipeline.eval.multi_factor_quantile import run_multi_factor_quantile
+from pipeline.eval.quantile.cs_quantile  import run_cs_quantile, run_cs_quantile_chart
+from pipeline.eval.quantile.multi_factor import run_multi_factor_quantile
+from pipeline.eval.quantile.wide_cache   import run_build_cache
 
 
 def main():
@@ -78,6 +79,9 @@ def main():
 
     # ── cs_quantile_chart ──────────────────────────────────────────────────────
     add_factor_only(sub.add_parser("cs_quantile_chart", help="重新生成截面分层跨日 tick 图（不重跑分层计算）"))
+
+    # ── build_cache ────────────────────────────────────────────────────────────
+    add_common(sub.add_parser("build_cache", help="预构建宽表 parquet 缓存（建议在分层/IC 计算前运行）"))
 
     # ── multi_factor_quantile ──────────────────────────────────────────────────
     p_mfq = sub.add_parser("multi_factor_quantile", help="多因子合成分层：IC 加权十分位")
@@ -156,6 +160,13 @@ def main():
             eval_root=config.EVAL_ROOT,
             factor_name=args.factor,
         )
+    elif args.stage == "build_cache":
+        run_build_cache(
+            factor_root=config.FACTOR_ROOT,
+            cache_root=config.WIDE_CACHE_ROOT,
+            dates=dates,
+            max_workers=args.workers,
+        )
     elif args.stage == "multi_factor_quantile":
         _pool = args.factor_pool
         _whitelist_path = None
@@ -173,6 +184,7 @@ def main():
             score_method=args.score_method,
             factor_pool=_pool,
             whitelist_path=_whitelist_path,
+            cache_root=config.WIDE_CACHE_ROOT,
         )
     else:
         parser.print_help()

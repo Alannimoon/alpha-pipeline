@@ -47,3 +47,8 @@ IC_STATS_ROOT  = os.path.join(ROOT, "result", "eval", "ic_stats")
 # 老师手动筛选结果：三个维度（单调性、IC、RankIC）的并集与交集
 FACTOR_POOL_UNION_TXT        = os.path.join(ROOT, "config", "factor_pool_union.txt")
 FACTOR_POOL_INTERSECTION_TXT = os.path.join(ROOT, "config", "factor_pool_intersection.txt")
+
+# ── 宽表 parquet 缓存 ──────────────────────────────────────────────────────────
+# 存储每日所有因子值 + 3条收益率的宽表，供多次分层计算复用，避免重复读原始 CSV。
+# 首次运行 union 因子池后，后续 intersection / threshold / zscore 均可直接读缓存。
+WIDE_CACHE_ROOT = os.path.join(ROOT, "result", "cache", "wide")

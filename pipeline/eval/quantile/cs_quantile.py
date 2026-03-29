@@ -48,7 +48,7 @@ try:
 except ImportError:
     tqdm = None
 
-from ._panel import get_factor_cols
+from .._panel import get_factor_cols
 
 N_GROUPS = 5
 
