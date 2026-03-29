@@ -818,8 +818,8 @@ def run_multi_factor_quantile(
             and os.path.isdir(os.path.join(scan_dir, d))
         )
 
-    # 3. 输出目录（每个 ret_horizon 一个子目录）
-    base_out = os.path.join(eval_root, "multi_factor_quantile")
+    # 3. 输出目录（按 score_method 分开，每个 ret_horizon 一个子目录）
+    base_out = os.path.join(eval_root, "multi_factor_quantile", score_method)
     out_dirs: dict[str, str] = {}
     for ret_h in _RET_HORIZONS:
         d = os.path.join(base_out, ret_h)
