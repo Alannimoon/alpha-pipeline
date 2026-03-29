@@ -86,6 +86,9 @@ def main():
     p_mfq.add_argument("--threshold",    type=float, default=0.02, help="IC 筛选阈值（默认 0.02）")
     p_mfq.add_argument("--score-method", default="rank", choices=["rank", "zscore"],
                        help="因子截面标准化方式：rank（分位数得分，默认）或 zscore（Z-score ±3截断）")
+    p_mfq.add_argument("--factor-pool", default="threshold",
+                       choices=["threshold", "union", "intersection"],
+                       help="因子池：threshold（IC阈值筛选，默认）/ union（并集51个）/ intersection（交集25个）")
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -154,6 +157,12 @@ def main():
             factor_name=args.factor,
         )
     elif args.stage == "multi_factor_quantile":
+        _pool = args.factor_pool
+        _whitelist_path = None
+        if _pool == "union":
+            _whitelist_path = config.FACTOR_POOL_UNION_TXT
+        elif _pool == "intersection":
+            _whitelist_path = config.FACTOR_POOL_INTERSECTION_TXT
         run_multi_factor_quantile(
             factor_root=config.FACTOR_ROOT,
             eval_root=config.EVAL_ROOT,
@@ -162,6 +171,8 @@ def main():
             dates=dates,
             max_workers=args.workers,
             score_method=args.score_method,
+            factor_pool=_pool,
+            whitelist_path=_whitelist_path,
         )
     else:
         parser.print_help()

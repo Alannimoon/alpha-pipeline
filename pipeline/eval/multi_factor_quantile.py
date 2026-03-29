@@ -51,12 +51,30 @@ _RET_HORIZONS = {
 
 # ── IC 权重加载 ────────────────────────────────────────────────────────────────
 
+def _load_whitelist(path: str) -> set[str]:
+    """
+    读取因子池白名单 txt 文件，返回 factor_col 集合。
+    每行一个 factor_col，# 开头为注释行，空行忽略。
+    """
+    result = set()
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                result.add(line)
+    return result
+
+
 def load_ic_weights(
     ic_stats_root: str,
     threshold: float = 0.02,
+    whitelist: set[str] | None = None,
 ) -> dict[str, dict]:
     """
-    读取所有因子的 cs_ic_stats.csv，筛选 session=all 且 |ic_mean| >= threshold。
+    读取所有因子的 cs_ic_stats.csv，筛选 session=all 的行，
+    按以下方式确定入选因子：
+      - whitelist 为 None  → 保留 |ic_mean| >= threshold 的因子（默认行为）
+      - whitelist 不为 None → 保留 factor_col 在白名单内的因子（忽略 threshold）
 
     Returns
     -------
@@ -82,10 +100,12 @@ def load_ic_weights(
 
     result = {}
     for ret_h in _RET_HORIZONS:
-        sub = all_stats[
-            (all_stats["ret_horizon"] == ret_h) &
-            (all_stats["ic_mean"].abs() >= threshold)
-        ].copy()
+        base = all_stats[all_stats["ret_horizon"] == ret_h]
+
+        if whitelist is not None:
+            sub = base[base["factor_col"].isin(whitelist)].copy()
+        else:
+            sub = base[base["ic_mean"].abs() >= threshold].copy()
 
         if sub.empty:
             result[ret_h] = {"weights": {}, "factor_names": {}, "ic_means": {}}
@@ -778,23 +798,31 @@ def run_multi_factor_quantile(
     dates: list[str] | None = None,
     max_workers: int | None = None,
     score_method: str = "rank",
+    factor_pool: str = "threshold",
+    whitelist_path: str | None = None,
 ):
     """
     Parameters
     ----------
-    factor_root   : 因子数据根目录（如 result/factor）
-    eval_root     : 评估结果输出根目录（如 result/eval）
-    ic_stats_root : cs_ic_stats.csv 的根目录（如 result/ic_stats）
-    threshold     : IC 均值绝对值筛选阈值，默认 0.02
-    dates         : 指定日期列表；None 时从某个通过筛选的因子目录自动扫描
-    max_workers   : 并行进程数
-    score_method  : 因子截面标准化方式，"rank"（分位数得分）或 "zscore"（Z-score ±3截断）
+    factor_root    : 因子数据根目录（如 result/factor）
+    eval_root      : 评估结果输出根目录（如 result/eval）
+    ic_stats_root  : cs_ic_stats.csv 的根目录（如 result/ic_stats）
+    threshold      : IC 均值绝对值筛选阈值，factor_pool="threshold" 时生效，默认 0.02
+    dates          : 指定日期列表；None 时从某个通过筛选的因子目录自动扫描
+    max_workers    : 并行进程数
+    score_method   : 因子截面标准化方式，"rank"（分位数得分）或 "zscore"（Z-score ±3截断）
+    factor_pool    : 因子池名称，用于输出目录命名：
+                       "threshold"    → 按 IC 阈值动态筛选（默认）
+                       "union"        → 并集白名单（51个）
+                       "intersection" → 交集白名单（25个）
+    whitelist_path : 白名单 txt 文件路径；factor_pool != "threshold" 时必须提供
     """
-    # 1. 加载权重
-    ic_weights = load_ic_weights(ic_stats_root, threshold=threshold)
+    # 1. 加载白名单（如有）并加载权重
+    whitelist = _load_whitelist(whitelist_path) if whitelist_path else None
+    ic_weights = load_ic_weights(ic_stats_root, threshold=threshold, whitelist=whitelist)
 
     # 打印筛选结果
-    print(f"[score_method={score_method}]")
+    print(f"[factor_pool={factor_pool}  score_method={score_method}]")
     for ret_h, info in ic_weights.items():
         cols = list(info["weights"].keys())
         print(f"[{ret_h}] 通过筛选因子（{len(cols)} 个）：{cols}")
@@ -818,8 +846,8 @@ def run_multi_factor_quantile(
             and os.path.isdir(os.path.join(scan_dir, d))
         )
 
-    # 3. 输出目录（按 score_method 分开，每个 ret_horizon 一个子目录）
-    base_out = os.path.join(eval_root, "multi_factor_quantile", score_method)
+    # 3. 输出目录：multi_factor_quantile/{factor_pool}/{score_method}/ret{horizon}/
+    base_out = os.path.join(eval_root, "multi_factor_quantile", factor_pool, score_method)
     out_dirs: dict[str, str] = {}
     for ret_h in _RET_HORIZONS:
         d = os.path.join(base_out, ret_h)
