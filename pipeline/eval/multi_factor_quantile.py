@@ -249,15 +249,45 @@ def _percentile_scores(f_mat: np.ndarray) -> np.ndarray:
     return scores
 
 
+def _zscore_scores(f_mat: np.ndarray, clip_std: float = 3.0) -> np.ndarray:
+    """
+    f_mat    : (T, N)  因子值矩阵（含 NaN）
+    clip_std : 截断阈值，默认 ±3σ
+    返回     : (T, N)  Z-score 得分矩阵，NaN 股票仍为 NaN
+
+    对每个时刻截面做 z = (x - mean) / std，再 clip 到 [-clip_std, +clip_std]。
+    std < 1e-9 时（截面几乎无差异）该时刻全部输出 0.0。
+    至少需要 2 只有效股票才计算，否则输出 NaN。
+    """
+    T, N = f_mat.shape
+    scores = np.full((T, N), np.nan)
+    for t in range(T):
+        row   = f_mat[t]
+        valid = np.isfinite(row)
+        nv    = int(valid.sum())
+        if nv < 2:
+            continue
+        vals  = row[valid]
+        mu    = vals.mean()
+        sigma = vals.std()
+        if sigma < 1e-9:
+            scores[t, valid] = 0.0
+        else:
+            scores[t, valid] = np.clip((vals - mu) / sigma, -clip_std, clip_std)
+    return scores
+
+
 def _composite_and_groups(
     wide_factors: dict[str, pd.DataFrame],
     weights: dict[str, float],
     r_wide: pd.DataFrame,
+    score_method: str = "rank",
 ) -> pd.DataFrame:
     """
     wide_factors : {factor_col: wide_df (index=SampleTime, cols=SecurityID)}
     weights      : {factor_col: w_i}
     r_wide       : wide_df for one return horizon
+    score_method : "rank"（分位数得分 [0,1)）或 "zscore"（截面Z-score，clip ±3）
 
     Returns
     -------
@@ -273,12 +303,14 @@ def _composite_and_groups(
     composite = np.zeros((T, N))
     weight_sum = np.zeros((T, N))   # 累计有效权重（分母，用于处理部分因子 NaN）
 
+    _score_fn = _zscore_scores if score_method == "zscore" else _percentile_scores
+
     for fc, w in weights.items():
         if fc not in wide_factors:
             continue
         f_wide = wide_factors[fc].reindex(index=ref_index, columns=ref_columns)
         f_mat  = f_wide.to_numpy(np.float64)
-        sc_mat = _percentile_scores(f_mat)                  # (T, N)
+        sc_mat = _score_fn(f_mat)                           # (T, N)
 
         valid_mask = np.isfinite(sc_mat)
         composite[valid_mask]   += w * sc_mat[valid_mask]
@@ -343,12 +375,14 @@ def _compute_day(
     out_dirs: dict[str, str],
     ic_info_by_horizon: dict[str, dict],
     day: str,
+    score_method: str = "rank",
 ) -> str:
     """
     单日入口：读宽表 → 合成分 → 十分层 → 写 CSV。
 
     ic_info_by_horizon : {ret_horizon: {'weights':..., 'factor_names':...}}
     out_dirs           : {ret_horizon: output_directory}
+    score_method       : "rank" 或 "zscore"
     """
     # 收集本次需要的所有 factor_col → factor_name 映射（跨 horizon 合并）
     all_fc_to_fn: dict[str, str] = {}
@@ -380,7 +414,7 @@ def _compute_day(
         if r_wide.empty:
             continue
 
-        df = _composite_and_groups(wide_factors, weights, r_wide)
+        df = _composite_and_groups(wide_factors, weights, r_wide, score_method=score_method)
         df = df.reset_index()
         df.insert(0, "Date", day)
 
@@ -563,6 +597,15 @@ def _build_cum_tick_chart(csv_dir: str) -> None:
         lambda g: g.index[0] - tick_df.index[0], include_groups=False
     )
 
+    # 计算多空平均 PnL（每笔交易）
+    ls_label = f"L/S(g{N_GROUPS}-g1)"
+    if "n_ticks" in daily_df.columns and "long_short" in daily_df.columns:
+        total_ticks = daily_df["n_ticks"].iloc[-1]
+        total_ls    = daily_df["long_short"].iloc[-1]
+        if pd.notna(total_ticks) and pd.notna(total_ls) and total_ticks > 0:
+            avg_pnl_bps = total_ls / total_ticks * 1e4
+            ls_label = f"L/S(g{N_GROUPS}-g1)  avg={avg_pnl_bps:+.3f}bps/tick"
+
     fig, ax = plt.subplots(figsize=(16, 6))
     for i, gc in enumerate(g_cols):
         if gc in tick_df.columns:
@@ -571,7 +614,7 @@ def _build_cum_tick_chart(csv_dir: str) -> None:
                     alpha=0.7, linewidth=0.7, label=gc)
     if "long_short" in tick_df.columns:
         ax.plot(x, tick_df["long_short"], color="black",
-                linewidth=1.2, label=f"L/S(g{N_GROUPS}-g1)")
+                linewidth=1.2, label=ls_label)
 
     tick_positions, tick_labels = [], []
     prev_month = None
@@ -595,11 +638,136 @@ def _build_cum_tick_chart(csv_dir: str) -> None:
     plt.close(fig)
 
 
+# ── 日内时间段分层图 ────────────────────────────────────────────────────────────
+
+# 8个30分钟时间窗口（左闭右开，HH:MM:SS字符串直接比较即可）
+_INTRADAY_SLOTS = [
+    ("09:30-10:00", "09:30:00", "10:00:00"),
+    ("10:00-10:30", "10:00:00", "10:30:00"),
+    ("10:30-11:00", "10:30:00", "11:00:00"),
+    ("11:00-11:30", "11:00:00", "11:30:00"),
+    ("13:00-13:30", "13:00:00", "13:30:00"),
+    ("13:30-14:00", "13:30:00", "14:00:00"),
+    ("14:00-14:30", "14:00:00", "14:30:00"),
+    ("14:30-14:57", "14:30:00", "23:59:59"),  # 最后一段取至收盘
+]
+
+
+def _build_intraday_slot_charts(csv_dir: str) -> None:
+    """
+    读取所有 {date}.csv（原始每 tick 分组收益），
+    按8个30分钟时间段分别对每天求和，再跨日 cumsum，
+    生成8张10分层图。
+
+    每张图：
+      X轴 = 交易日序列（跨日累计，每日一个点）
+      Y轴 = 累计收益（该时段每天所有 tick 收益求和后跨日累积）
+      多空曲线标注每笔交易平均 PnL
+
+    输出：_chart_slot_{n}_{label}.png（8张，n=1~8）
+    """
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    if not files:
+        return
+
+    g_cols = [f"g{g}" for g in range(1, N_GROUPS + 1)]
+
+    slot_iter = tqdm(_INTRADAY_SLOTS, desc="intraday_slot_charts") if tqdm else _INTRADAY_SLOTS
+    for slot_idx, (label, t_start, t_end) in enumerate(slot_iter, start=1):
+        daily_rows = []
+
+        for f in files:
+            day = os.path.splitext(os.path.basename(f))[0]
+            df  = pd.read_csv(f, dtype={"SampleTime": str})
+
+            # 左闭右开筛选时段
+            mask = (df["SampleTime"] >= t_start) & (df["SampleTime"] < t_end)
+            sub  = df.loc[mask, [c for c in g_cols if c in df.columns]]
+
+            if sub.empty:
+                continue
+
+            row = {"Date": day}
+            for gc in g_cols:
+                row[gc] = float(sub[gc].sum(skipna=True)) if gc in sub.columns else np.nan
+            # 有效 tick 数（g1 非 NaN 的行数）
+            row["n_ticks"] = int(sub[g_cols[0]].notna().sum()) if g_cols[0] in sub.columns else 0
+            daily_rows.append(row)
+
+        if not daily_rows:
+            continue
+
+        daily = (
+            pd.DataFrame(daily_rows)
+            .sort_values("Date")
+            .reset_index(drop=True)
+        )
+
+        # 跨日 cumsum
+        cum_cols = [gc for gc in g_cols if gc in daily.columns] + ["n_ticks"]
+        daily[cum_cols] = daily[cum_cols].cumsum()
+        daily["long_short"] = daily[f"g{N_GROUPS}"] - daily["g1"]
+
+        # 多空平均 PnL（每笔交易）
+        total_ticks = daily["n_ticks"].iloc[-1]
+        total_ls    = daily["long_short"].iloc[-1]
+        ls_label = f"L/S(g{N_GROUPS}-g1)"
+        if pd.notna(total_ticks) and pd.notna(total_ls) and total_ticks > 0:
+            avg_pnl_bps = total_ls / total_ticks * 1e4
+            ls_label = f"L/S(g{N_GROUPS}-g1)  avg={avg_pnl_bps:+.3f}bps/tick"
+
+        # 画图
+        x = np.arange(len(daily))
+        fig, ax = plt.subplots(figsize=(14, 5))
+
+        for i, gc in enumerate(g_cols):
+            if gc in daily.columns:
+                ax.plot(x, daily[gc],
+                        color=_GROUP_COLORS[i % len(_GROUP_COLORS)],
+                        alpha=0.7, linewidth=0.9, label=gc)
+        if "long_short" in daily.columns:
+            ax.plot(x, daily["long_short"], color="black",
+                    linewidth=1.4, label=ls_label)
+
+        # X轴刻度：每月第一个交易日
+        tick_positions, tick_labels_ax = [], []
+        prev_month = None
+        for xi, date_val in enumerate(daily["Date"]):
+            month = str(date_val)[:6]
+            if month != prev_month:
+                ax.axvline(xi, color="gray", linewidth=0.4, linestyle="--")
+                tick_positions.append(xi)
+                tick_labels_ax.append(f"{str(date_val)[:4]}-{str(date_val)[4:6]}")
+                prev_month = month
+
+        ax.axhline(0, color="black", linewidth=0.6, linestyle=":")
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.2%}"))
+        ax.set_ylabel("Cumulative Return")
+        ax.set_title(
+            f"Multi-Factor Composite  Slot {slot_idx}: {label}  "
+            f"Daily Cumulative Return"
+        )
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels(tick_labels_ax, rotation=45, ha="right", fontsize=8)
+        ax.legend(loc="upper left", ncol=N_GROUPS + 1, fontsize=7)
+        fig.tight_layout()
+
+        safe_label = label.replace(":", "").replace("-", "_")
+        fig.savefig(
+            os.path.join(csv_dir, f"_chart_slot_{slot_idx}_{safe_label}.png"),
+            dpi=150, bbox_inches="tight",
+        )
+        plt.close(fig)
+
+
 # ── 批量入口 ───────────────────────────────────────────────────────────────────
 
 def _worker(args) -> str:
-    factor_root, out_dirs, ic_info_by_horizon, day = args
-    return _compute_day(factor_root, out_dirs, ic_info_by_horizon, day)
+    factor_root, out_dirs, ic_info_by_horizon, day, score_method = args
+    return _compute_day(factor_root, out_dirs, ic_info_by_horizon, day, score_method)
 
 
 def run_multi_factor_quantile(
@@ -609,6 +777,7 @@ def run_multi_factor_quantile(
     threshold: float = 0.02,
     dates: list[str] | None = None,
     max_workers: int | None = None,
+    score_method: str = "rank",
 ):
     """
     Parameters
@@ -619,11 +788,13 @@ def run_multi_factor_quantile(
     threshold     : IC 均值绝对值筛选阈值，默认 0.02
     dates         : 指定日期列表；None 时从某个通过筛选的因子目录自动扫描
     max_workers   : 并行进程数
+    score_method  : 因子截面标准化方式，"rank"（分位数得分）或 "zscore"（Z-score ±3截断）
     """
     # 1. 加载权重
     ic_weights = load_ic_weights(ic_stats_root, threshold=threshold)
 
     # 打印筛选结果
+    print(f"[score_method={score_method}]")
     for ret_h, info in ic_weights.items():
         cols = list(info["weights"].keys())
         print(f"[{ret_h}] 通过筛选因子（{len(cols)} 个）：{cols}")
@@ -657,7 +828,7 @@ def run_multi_factor_quantile(
         _save_weights(d, ic_weights[ret_h])
 
     # 4. 并行逐日计算
-    tasks = [(factor_root, out_dirs, ic_weights, day) for day in dates]
+    tasks = [(factor_root, out_dirs, ic_weights, day, score_method) for day in dates]
 
     if max_workers == 1:
         day_iter = tqdm(tasks, desc="Multi-Factor Quantile") if tqdm else tasks
@@ -681,6 +852,7 @@ def run_multi_factor_quantile(
         _build_cum_tick(sub_dir)
         _build_cum_daily(sub_dir)
         _build_cum_tick_chart(sub_dir)
+        _build_intraday_slot_charts(sub_dir)
         print(f"[{ret_h}] 汇总完成：{sub_dir}")
 
     print(f"多因子分层计算完成：{base_out}")

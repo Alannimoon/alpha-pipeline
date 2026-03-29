@@ -81,9 +81,11 @@ def main():
 
     # ── multi_factor_quantile ──────────────────────────────────────────────────
     p_mfq = sub.add_parser("multi_factor_quantile", help="多因子合成分层：IC 加权十分位")
-    p_mfq.add_argument("--date",      default=None,  help="只处理指定日期，如 20250102")
-    p_mfq.add_argument("--workers",   type=int, default=None, help="并行进程数（默认 CPU 核数）")
-    p_mfq.add_argument("--threshold", type=float, default=0.02, help="IC 筛选阈值（默认 0.02）")
+    p_mfq.add_argument("--date",         default=None,   help="只处理指定日期，如 20250102")
+    p_mfq.add_argument("--workers",      type=int, default=None, help="并行进程数（默认 CPU 核数）")
+    p_mfq.add_argument("--threshold",    type=float, default=0.02, help="IC 筛选阈值（默认 0.02）")
+    p_mfq.add_argument("--score-method", default="rank", choices=["rank", "zscore"],
+                       help="因子截面标准化方式：rank（分位数得分，默认）或 zscore（Z-score ±3截断）")
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -159,6 +161,7 @@ def main():
             threshold=args.threshold,
             dates=dates,
             max_workers=args.workers,
+            score_method=args.score_method,
         )
     else:
         parser.print_help()
