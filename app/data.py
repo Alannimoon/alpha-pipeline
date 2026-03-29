@@ -278,6 +278,85 @@ def load_quantile_pnl_stats(
     return result
 
 
+# ── 多因子合成分层（multi_factor_quantile）─────────────────────────────────────
+
+_MFQ_ROOT = os.path.join(config.EVAL_ROOT, "multi_factor_quantile")
+_MFQ_N_GROUPS = 10
+
+
+def available_mfq_horizons() -> list[str]:
+    """返回已有结果的收益率窗口列表。"""
+    if not os.path.isdir(_MFQ_ROOT):
+        return []
+    return sorted(
+        d for d in os.listdir(_MFQ_ROOT)
+        if os.path.isdir(os.path.join(_MFQ_ROOT, d)) and d.startswith("ret")
+    )
+
+
+def available_mfq_dates(ret_horizon: str) -> list[str]:
+    csv_dir = os.path.join(_MFQ_ROOT, ret_horizon)
+    files = sorted(
+        f for f in glob.glob(os.path.join(csv_dir, "*.csv"))
+        if not os.path.basename(f).startswith("_")
+    )
+    return [os.path.splitext(os.path.basename(f))[0] for f in files]
+
+
+@st.cache_data
+def load_mfq_weights(ret_horizon: str) -> pd.DataFrame:
+    path = os.path.join(_MFQ_ROOT, ret_horizon, "_weights.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    return pd.read_csv(path)
+
+
+@st.cache_data
+def load_mfq_cum_daily(ret_horizon: str) -> pd.DataFrame:
+    path = os.path.join(_MFQ_ROOT, ret_horizon, "_cum_daily.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    df = pd.read_csv(path, dtype={"Date": str})
+    df["Date"] = pd.to_datetime(df["Date"], format="%Y%m%d")
+    return df
+
+
+@st.cache_data
+def load_mfq_tick_one_day(ret_horizon: str, day: str) -> pd.DataFrame:
+    path = os.path.join(_MFQ_ROOT, ret_horizon, f"_cum_tick_{day}.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    return pd.read_csv(path, dtype={"SampleTime": str})
+
+
+@st.cache_data
+def load_mfq_pnl_stats(ret_horizon: str) -> dict:
+    path = os.path.join(_MFQ_ROOT, ret_horizon, "_cum_daily.csv")
+    if not os.path.exists(path):
+        return {}
+    df = pd.read_csv(path, dtype={"Date": str})
+    if df.empty:
+        return {}
+    last = df.iloc[-1]
+    g_cols = [f"g{g}" for g in range(1, _MFQ_N_GROUPS + 1)] + ["long_short"]
+    result: dict = {}
+    for c in g_cols:
+        if c in last.index and pd.notna(last[c]):
+            result[c] = float(last[c])
+    n_ticks = float(last["n_ticks"]) if "n_ticks" in last.index and pd.notna(last["n_ticks"]) else None
+    result["n_ticks"] = n_ticks
+    if n_ticks and n_ticks > 0:
+        for c in g_cols:
+            if c in result:
+                result[f"avg_{c}"] = result[c] / n_ticks
+    return result
+
+
+def mfq_chart_path(ret_horizon: str) -> str | None:
+    path = os.path.join(_MFQ_ROOT, ret_horizon, "_chart_tick.png")
+    return path if os.path.exists(path) else None
+
+
 @st.cache_data
 def load_cs_one_day(
     factor_name: str, ret_horizon: str, session: str, day: str

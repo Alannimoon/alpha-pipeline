@@ -483,18 +483,24 @@ def _build_cum_daily(csv_dir: str) -> None:
         if not g_cols:
             continue
 
-        # 最后一行 = 日内累计总收益
-        last      = df[g_cols + ["long_short"]].iloc[[-1]].copy()
-        n_ticks   = int(df[g_cols[0]].notna().sum()) if g_cols else 0
-        last["n_ticks"] = n_ticks
-        last.insert(0, "Date", day)
-        rows.append(last)
+        # 取 cumsum 各列最后一个非 NaN 值作为当日累计总收益。
+        # 不能用 .iloc[-1]：日末 100~300 tick 无前向收益，cumsum 在 NaN 位置
+        # 直接输出 NaN（pandas skipna=True 不补前值），末行可能全为 NaN。
+        row: dict = {"Date": day}
+        for gc in g_cols:
+            valid = df[gc].dropna()
+            row[gc] = float(valid.iloc[-1]) if len(valid) > 0 else np.nan
+        if "long_short" in df.columns:
+            valid_ls = df["long_short"].dropna()
+            row["long_short"] = float(valid_ls.iloc[-1]) if len(valid_ls) > 0 else np.nan
+        row["n_ticks"] = int(df[g_cols[0]].notna().sum()) if g_cols else 0
+        rows.append(row)
 
     if not rows:
         return
 
     all_last = (
-        pd.concat(rows, ignore_index=True)
+        pd.DataFrame(rows)
         .sort_values("Date")
         .reset_index(drop=True)
     )

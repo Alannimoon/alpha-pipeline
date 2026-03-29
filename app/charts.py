@@ -157,6 +157,66 @@ def quantile_daily_cum_chart(daily_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+_MFQ_GROUP_COLORS = [
+    "#d62728", "#e07b2a", "#d4a017", "#9acd32", "#3cb371",
+    "#2ca02c", "#17becf", "#1f77b4", "#7b52ab", "#8c564b",
+]
+# g1(最低)=深红 … g10(最高)=棕，渐变从空头到多头
+
+
+def mfq_daily_cum_chart(daily_df: pd.DataFrame, n_groups: int = 10) -> go.Figure:
+    """多因子合成分层日频累计收益曲线（10组 + 多空线）。"""
+    fig = go.Figure()
+    for g in range(1, n_groups + 1):
+        col = f"g{g}"
+        if col in daily_df.columns:
+            fig.add_trace(go.Scatter(
+                x=daily_df["Date"], y=daily_df[col],
+                name=f"g{g}",
+                line=dict(color=_MFQ_GROUP_COLORS[(g - 1) % len(_MFQ_GROUP_COLORS)]),
+                opacity=0.7,
+            ))
+    if "long_short" in daily_df.columns:
+        fig.add_trace(go.Scatter(
+            x=daily_df["Date"], y=daily_df["long_short"],
+            name=f"多空(g{n_groups}-g1)", line=dict(color="black", width=2),
+        ))
+    fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
+    fig.update_layout(
+        xaxis_title="Date", yaxis_title="日频累计收益率",
+        yaxis_tickformat=".4%", height=560, margin=dict(t=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+def mfq_intraday_cum_chart(intraday_df: pd.DataFrame, day: str, n_groups: int = 10) -> go.Figure:
+    """多因子合成分层单日 tick 级别日内累计收益曲线。"""
+    fig = go.Figure()
+    for g in range(1, n_groups + 1):
+        col = f"g{g}"
+        if col in intraday_df.columns:
+            fig.add_trace(go.Scatter(
+                x=intraday_df["SampleTime"], y=intraday_df[col],
+                name=f"g{g}",
+                line=dict(color=_MFQ_GROUP_COLORS[(g - 1) % len(_MFQ_GROUP_COLORS)]),
+                opacity=0.7,
+            ))
+    if "long_short" in intraday_df.columns:
+        fig.add_trace(go.Scatter(
+            x=intraday_df["SampleTime"], y=intraday_df["long_short"],
+            name=f"多空(g{n_groups}-g1)", line=dict(color="black", width=2),
+        ))
+    fig.add_hline(y=0, line_color="black", line_width=0.8, line_dash="dot")
+    fig.update_layout(
+        xaxis_title="SampleTime", yaxis_title=f"日内累计收益率  {day}",
+        yaxis_tickformat=".4%", height=560, margin=dict(t=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        xaxis=dict(tickangle=45, nticks=20),
+    )
+    return fig
+
+
 def cs_daily_trend_chart(df: pd.DataFrame, factor_col: str) -> go.Figure:
     """
     CS-IC 跨日趋势：X = 日期，Y = 当日所有时间点的 IC 均值。

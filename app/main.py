@@ -20,10 +20,14 @@ from data import (
     load_quantile_tick_cum, load_quantile_tick_one_day, load_quantile_daily_cum,
     load_quantile_pnl_stats, quantile_tick_chart_path,
     load_monotonicity_stats, load_factor_meta,
+    available_mfq_horizons, available_mfq_dates,
+    load_mfq_weights, load_mfq_cum_daily, load_mfq_tick_one_day,
+    load_mfq_pnl_stats, mfq_chart_path,
 )
 from charts import (
     ic_summary_chart, cs_daily_trend_chart, cs_intraday_chart,
     quantile_tick_cum_chart, quantile_intraday_cum_chart, quantile_daily_cum_chart,
+    mfq_daily_cum_chart, mfq_intraday_cum_chart,
 )
 
 # ── 页面配置 ──────────────────────────────────────────────────────────────────
@@ -45,7 +49,9 @@ session     = st.sidebar.selectbox("Session", ["all", "am", "pm"])
 
 # ── Tab 布局 ──────────────────────────────────────────────────────────────────
 
-tab_summary, tab_cs, tab_quantile, tab_meta = st.tabs(["📊 IC 汇总", "📈 截面详情", "📉 截面分层", "📖 因子说明"])
+tab_summary, tab_cs, tab_quantile, tab_mfq, tab_meta = st.tabs(
+    ["📊 IC 汇总", "📈 截面详情", "📉 截面分层", "🔀 多因子分层", "📖 因子说明"]
+)
 
 
 # ── Tab 1：IC 汇总 ────────────────────────────────────────────────────────────
@@ -222,7 +228,105 @@ with tab_quantile:
                         title="每 tick 平均收益（全周期）", mono=mono)
 
 
-# ── Tab 4：因子说明 ────────────────────────────────────────────────────────────
+# ── Tab 4：多因子分层 ──────────────────────────────────────────────────────────
+
+def _show_mfq_pnl(pnl: dict, title: str) -> None:
+    """将10组 PNL 以表格形式展示：全年累计收益 + 每 tick 平均收益。"""
+    if not pnl:
+        return
+    n_ticks = pnl.get("n_ticks") or 0
+    g_labels = [f"g{g}" for g in range(1, 11)] + ["多空(g10-g1)"]
+    g_keys   = [f"g{g}" for g in range(1, 11)] + ["long_short"]
+    rows = []
+    for label, key in zip(g_labels, g_keys):
+        total = pnl.get(key)
+        avg   = pnl.get(f"avg_{key}")
+        if total is None and avg is None:
+            continue
+        rows.append({
+            "组别":       label,
+            "全年累计收益": f"{total:.4%}" if total is not None else "",
+            "每tick平均":  f"{avg:.5%}"   if avg   is not None else "",
+        })
+    if not rows:
+        return
+    st.divider()
+    st.subheader(title)
+    if n_ticks:
+        st.caption(f"有效 tick 数：{int(n_ticks):,}")
+    st.dataframe(pd.DataFrame(rows).set_index("组别"), use_container_width=True)
+
+
+with tab_mfq:
+    mfq_horizons = available_mfq_horizons()
+    if not mfq_horizons:
+        st.warning("暂无多因子分层结果，请先运行 `python run.py multi_factor_quantile`。")
+    else:
+        mfq_ret = st.selectbox("收益率窗口", mfq_horizons, key="mfq_ret")
+
+        # 权重表
+        wdf = load_mfq_weights(mfq_ret)
+        if not wdf.empty:
+            with st.expander("本次筛选因子及权重", expanded=True):
+                st.dataframe(
+                    wdf.style.format({"ic_mean": "{:+.4f}", "weight": "{:+.4f}"}),
+                    use_container_width=True,
+                )
+
+        mfq_view = st.radio("视图", ["单日 tick", "日频累计"], horizontal=True, key="mfq_view")
+
+        if mfq_view == "单日 tick":
+            mfq_dates = available_mfq_dates(mfq_ret)
+            if not mfq_dates:
+                st.warning("暂无分层数据。")
+                st.stop()
+            date_opts = ["全部（跨日图）"] + mfq_dates
+            mfq_day   = st.selectbox("日期", date_opts, key="mfq_day")
+
+            if mfq_day == "全部（跨日图）":
+                img = mfq_chart_path(mfq_ret)
+                if img:
+                    st.image(img, use_container_width=True)
+                else:
+                    st.warning("预渲染图不存在，请重新运行 multi_factor_quantile。")
+                # 全周期 PNL 统计
+                _show_mfq_pnl(load_mfq_pnl_stats(mfq_ret), title="每 tick 平均收益（全周期）")
+
+            else:
+                intra = load_mfq_tick_one_day(mfq_ret, mfq_day)
+                if intra.empty:
+                    st.warning("该日期暂无数据。")
+                else:
+                    st.caption(f"{mfq_day} 日内累计，{len(intra)} 个 tick。")
+                    st.plotly_chart(
+                        mfq_intraday_cum_chart(intra, mfq_day),
+                        use_container_width=True,
+                    )
+                    # 当日 PNL 统计
+                    g_keys = [f"g{g}" for g in range(1, 11)] + ["long_short"]
+                    valid  = intra.dropna(subset=["g1"]) if "g1" in intra.columns else intra
+                    n = len(valid)
+                    if not valid.empty and n > 0:
+                        last_row = valid.iloc[-1]
+                        day_pnl: dict = {"n_ticks": n}
+                        for key in g_keys:
+                            if key in last_row.index and pd.notna(last_row[key]):
+                                day_pnl[key]            = float(last_row[key])
+                                day_pnl[f"avg_{key}"]   = float(last_row[key]) / n
+                        _show_mfq_pnl(day_pnl, title=f"每 tick 平均收益（{mfq_day}）")
+
+        else:  # 日频累计
+            daily_df = load_mfq_cum_daily(mfq_ret)
+            if daily_df.empty:
+                st.warning("暂无分层数据。")
+            else:
+                st.caption(f"共 {len(daily_df)} 个交易日，跨日累计收益。")
+                st.plotly_chart(mfq_daily_cum_chart(daily_df), use_container_width=True)
+            # 全周期 PNL 统计
+            _show_mfq_pnl(load_mfq_pnl_stats(mfq_ret), title="每 tick 平均收益（全周期）")
+
+
+# ── Tab 5：因子说明 ────────────────────────────────────────────────────────────
 
 with tab_meta:
     meta_df = load_factor_meta()

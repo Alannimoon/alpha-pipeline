@@ -352,15 +352,23 @@ def _build_cum_daily(csv_dir: str) -> None:
             continue
         day = m.group(1)
         df  = pd.read_csv(f, dtype={"SampleTime": str})
-        # 每个 factor_col 的最后一行 = 当日日内总收益
-        last = df.groupby("factor_col").last().reset_index()
-        # 统计当日每个 factor_col 的有效 tick 数（g5 非 NaN 的行数）
-        n_valid = (
-            df.groupby("factor_col")["g5"]
-            .apply(lambda x: x.notna().sum())
-            .reset_index(name="n_ticks")
-        )
-        last = last.merge(n_valid, on="factor_col")
+        g_cols_tick = [f"g{g}" for g in range(1, 6) if f"g{g}" in df.columns]
+        ls_cols     = g_cols_tick + (["long_short"] if "long_short" in df.columns else [])
+
+        # 取各 g 列最后一个非 NaN 的 cumsum 值作为当日总收益。
+        # 不能用 .last()：日末若干 tick 无前向收益 → g 值为 NaN →
+        # cumsum 在 NaN 位置直接输出 NaN（pandas skipna=True 不补前值），
+        # 导致 groupby().last() 取到全 NaN 行。
+        last_rows = []
+        for fc, grp in df.groupby("factor_col"):
+            row: dict = {"factor_col": fc}
+            for gc in ls_cols:
+                valid = grp[gc].dropna()
+                row[gc] = float(valid.iloc[-1]) if len(valid) > 0 else np.nan
+            row["n_ticks"] = int(grp[g_cols_tick[0]].notna().sum()) if g_cols_tick else 0
+            last_rows.append(row)
+
+        last = pd.DataFrame(last_rows)
         last.insert(1, "Date", day)
         rows.append(last)
 
