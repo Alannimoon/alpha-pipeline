@@ -76,11 +76,13 @@ def main():
     p_mfq.add_argument("--date",         default=None,   help="只处理指定日期，如 20250102")
     p_mfq.add_argument("--workers",      type=int, default=None, help="并行进程数（默认 CPU 核数）")
     p_mfq.add_argument("--threshold",    type=float, default=0.02, help="IC 筛选阈值（默认 0.02）")
-    p_mfq.add_argument("--score-method", default="rank", choices=["rank", "zscore"],
-                       help="因子截面标准化方式：rank（分位数得分，默认）或 zscore（Z-score ±3截断）")
+    p_mfq.add_argument("--score-method", default="rank", choices=["rank", "zscore", "minmax"],
+                       help="因子截面标准化方式：rank（分位数得分，默认）/ zscore（Z-score ±3截断）/ minmax（MinMax 归一化）")
     p_mfq.add_argument("--factor-pool", default="threshold",
                        choices=["threshold", "union", "intersection"],
                        help="因子池：threshold（IC阈值筛选，默认）/ union（并集51个）/ intersection（交集25个）")
+    p_mfq.add_argument("--n-groups", type=int, default=10,
+                       help="分层组数，默认 10")
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -157,6 +159,7 @@ def main():
             score_method=args.score_method,
             factor_pool=_pool,
             whitelist_path=_whitelist_path,
+            n_groups=args.n_groups,
         )
     else:
         parser.print_help()

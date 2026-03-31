@@ -25,12 +25,18 @@ try:
 except ImportError:
     tqdm = None
 
-from .factor_score import N_GROUPS
-
 _GROUP_COLORS = [
     "#d62728", "#e07b2a", "#d4a017", "#9acd32", "#3cb371",
     "#2ca02c", "#17becf", "#1f77b4", "#7b52ab", "#8c564b",
+    "#e377c2", "#f7b6d2", "#bcbd22", "#dbdb8d", "#17becf",
+    "#9edae5", "#aec7e8", "#ffbb78", "#98df8a", "#c5b0d5",
 ]
+
+def _g_cols(df) -> list[str]:
+    """从 DataFrame 列名中提取 g1, g2, ... 列，按数字排序。"""
+    return sorted([c for c in df.columns if re.match(r"^g\d+$", c)],
+                  key=lambda c: int(c[1:]))
+
 
 _INTRADAY_SLOTS = [
     ("09:30-10:00", "09:30:00", "10:00:00"),
@@ -62,7 +68,7 @@ def _build_daily(parquet_dir: str) -> None:
     for f in files:
         day    = os.path.splitext(os.path.basename(f))[0]
         df     = pd.read_parquet(f)
-        g_cols = [f"g{g}" for g in range(1, N_GROUPS + 1) if f"g{g}" in df.columns]
+        g_cols = _g_cols(df)
         if not g_cols:
             continue
         row = {"Date": day}
@@ -82,7 +88,7 @@ def _build_summary(parquet_dir: str) -> None:
     daily_means = []
     for f in files:
         df     = pd.read_parquet(f)
-        g_cols = [f"g{g}" for g in range(1, N_GROUPS + 1) if f"g{g}" in df.columns]
+        g_cols = _g_cols(df)
         if g_cols:
             daily_means.append(df[g_cols].mean())
 
@@ -110,7 +116,7 @@ def _build_cum_daily(parquet_dir: str) -> None:
     for f in files:
         day    = os.path.splitext(os.path.basename(f))[0]
         df     = pd.read_parquet(f)
-        g_cols = [f"g{g}" for g in range(1, N_GROUPS + 1) if f"g{g}" in df.columns]
+        g_cols = _g_cols(df)
         if not g_cols:
             continue
         row = {"Date": day}
@@ -127,10 +133,10 @@ def _build_cum_daily(parquet_dir: str) -> None:
         .sort_values("Date")
         .reset_index(drop=True)
     )
-    g_cols   = [f"g{g}" for g in range(1, N_GROUPS + 1) if f"g{g}" in all_days.columns]
+    g_cols   = _g_cols(all_days)
     cum_cols = g_cols + ["n_ticks"]
     all_days[cum_cols] = all_days[cum_cols].cumsum()
-    all_days["long_short"] = all_days[f"g{N_GROUPS}"] - all_days["g1"]
+    all_days["long_short"] = all_days[g_cols[-1]] - all_days["g1"]
 
     keep = ["Date"] + g_cols + ["long_short", "n_ticks"]
     all_days[keep].to_csv(os.path.join(parquet_dir, "_cum_daily.csv"), index=False)
@@ -152,7 +158,7 @@ def _build_cum_tick_chart(parquet_dir: str) -> None:
         return
     daily_df = pd.read_csv(daily_path, dtype={"Date": str}).set_index("Date")
 
-    g_cols   = [f"g{g}" for g in range(1, N_GROUPS + 1) if f"g{g}" in daily_df.columns]
+    g_cols   = _g_cols(daily_df)
     all_cols = g_cols + (["long_short"] if "long_short" in daily_df.columns else [])
 
     dfs       = []
@@ -168,7 +174,7 @@ def _build_cum_tick_chart(parquet_dir: str) -> None:
 
         sub = df[["SampleTime"] + avail].copy()
         sub[g_cols] = sub[g_cols].cumsum()
-        sub["long_short"] = sub[f"g{N_GROUPS}"] - sub["g1"]
+        sub["long_short"] = sub[g_cols[-1]] - sub["g1"]
 
         if prev_date is not None and prev_date in daily_df.index:
             offset = daily_df.loc[prev_date, all_cols]
@@ -187,13 +193,13 @@ def _build_cum_tick_chart(parquet_dir: str) -> None:
         lambda g: g.index[0] - tick_df.index[0], include_groups=False
     )
 
-    ls_label = f"L/S(g{N_GROUPS}-g1)"
+    ls_label = f"L/S({g_cols[-1]}-g1)"
     if "n_ticks" in daily_df.columns and "long_short" in daily_df.columns:
         total_ticks = daily_df["n_ticks"].iloc[-1]
         total_ls    = daily_df["long_short"].iloc[-1]
         if pd.notna(total_ticks) and pd.notna(total_ls) and total_ticks > 0:
             avg_pnl_bps = total_ls / total_ticks * 1e4
-            ls_label = f"L/S(g{N_GROUPS}-g1)  avg={avg_pnl_bps:+.3f}bps/tick"
+            ls_label = f"L/S({g_cols[-1]}-g1)  avg={avg_pnl_bps:+.3f}bps/tick"
 
     fig, ax = plt.subplots(figsize=(16, 6))
     for i, gc in enumerate(g_cols):
@@ -221,7 +227,7 @@ def _build_cum_tick_chart(parquet_dir: str) -> None:
     ax.set_title("Multi-Factor Composite  Cross-Day Tick Cumulative Return")
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=8)
-    ax.legend(loc="upper left", ncol=N_GROUPS + 1, fontsize=7)
+    ax.legend(loc="upper left", ncol=len(g_cols) + 1, fontsize=7)
     fig.tight_layout()
     fig.savefig(os.path.join(parquet_dir, "_chart_tick.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -236,7 +242,7 @@ def _build_intraday_slot_charts(parquet_dir: str) -> None:
         return
 
     first_df = pd.read_parquet(files[0])
-    g_cols = [f"g{g}" for g in range(1, N_GROUPS + 1) if f"g{g}" in first_df.columns]
+    g_cols = _g_cols(first_df)
     if not g_cols:
         return
 
@@ -261,14 +267,14 @@ def _build_intraday_slot_charts(parquet_dir: str) -> None:
         daily    = pd.DataFrame(daily_rows).sort_values("Date").reset_index(drop=True)
         cum_cols = [gc for gc in g_cols if gc in daily.columns] + ["n_ticks"]
         daily[cum_cols] = daily[cum_cols].cumsum()
-        daily["long_short"] = daily[f"g{N_GROUPS}"] - daily["g1"]
+        daily["long_short"] = daily[g_cols[-1]] - daily["g1"]
 
         total_ticks = daily["n_ticks"].iloc[-1]
         total_ls    = daily["long_short"].iloc[-1]
-        ls_label    = f"L/S(g{N_GROUPS}-g1)"
+        ls_label    = f"L/S({g_cols[-1]}-g1)"
         if pd.notna(total_ticks) and pd.notna(total_ls) and total_ticks > 0:
             avg_pnl_bps = total_ls / total_ticks * 1e4
-            ls_label = f"L/S(g{N_GROUPS}-g1)  avg={avg_pnl_bps:+.3f}bps/tick"
+            ls_label = f"L/S({g_cols[-1]}-g1)  avg={avg_pnl_bps:+.3f}bps/tick"
 
         x = np.arange(len(daily))
         fig, ax = plt.subplots(figsize=(14, 5))
@@ -296,7 +302,7 @@ def _build_intraday_slot_charts(parquet_dir: str) -> None:
         ax.set_title(f"Multi-Factor Composite  Slot {slot_idx}: {label}  Daily Cumulative Return")
         ax.set_xticks(tick_positions)
         ax.set_xticklabels(tick_labels_ax, rotation=45, ha="right", fontsize=8)
-        ax.legend(loc="upper left", ncol=N_GROUPS + 1, fontsize=7)
+        ax.legend(loc="upper left", ncol=len(g_cols) + 1, fontsize=7)
         fig.tight_layout()
         safe_label = label.replace(":", "").replace("-", "_")
         fig.savefig(

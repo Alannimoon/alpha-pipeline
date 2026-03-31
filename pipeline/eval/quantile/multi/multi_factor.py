@@ -7,11 +7,11 @@
   1. 读取 factor/{name}/{date}.parquet（各因子长表，pivot 成宽表）
   2. 读取 base/{date}.parquet（列投影读 ret_fwd 列，pivot 成宽表）
   3. 预计算因子得分矩阵（复用于 3 个 ret_horizon）
-  4. 对每个 ret_horizon：IC加权合成分 → 十分位分组收益 → 写 {date}.parquet
+  4. 对每个 ret_horizon：IC加权合成分 → N 分位分组收益 → 写 {date}.parquet
 
 输出目录
 --------
-{eval_root}/multi_factor_quantile/{factor_pool}/{score_method}/ret{100|200|300}/
+{eval_root}/multi_factor_quantile/g{n_groups}/{factor_pool}/{score_method}/ret{100|200|300}/
 """
 
 import os
@@ -28,8 +28,7 @@ except ImportError:
 from .factor_score import (
     _RET_HORIZONS,
     _load_whitelist,
-    _percentile_scores,
-    _zscore_scores,
+    _get_score_fn,
     _composite_and_groups,
     _save_weights,
     load_ic_weights,
@@ -107,6 +106,7 @@ def _compute_day(
     ic_info_by_horizon: dict[str, dict],
     day: str,
     score_method: str = "rank",
+    n_groups: int = 10,
 ) -> str:
     """
     单日计算入口。
@@ -151,7 +151,7 @@ def _compute_day(
     )
     score_cache: dict[str, np.ndarray] | None = None
     if ref_r_wide is not None:
-        _score_fn = _zscore_scores if score_method == "zscore" else _percentile_scores
+        _score_fn = _get_score_fn(score_method)
         ref_index   = ref_r_wide.index
         ref_columns = ref_r_wide.columns
         score_cache = {
@@ -178,6 +178,7 @@ def _compute_day(
             wide_factors, weights, r_wide,
             score_method=score_method,
             score_cache=score_cache,
+            n_groups=n_groups,
         )
         df = df.reset_index()
         df.insert(0, "Date", day)
@@ -192,9 +193,9 @@ def _compute_day(
 # ── Worker（供 ProcessPoolExecutor 调用）──────────────────────────────────────
 
 def _worker(args) -> str:
-    factor_root, base_root, out_dirs, ic_info_by_horizon, day, score_method = args
+    factor_root, base_root, out_dirs, ic_info_by_horizon, day, score_method, n_groups = args
     return _compute_day(
-        factor_root, base_root, out_dirs, ic_info_by_horizon, day, score_method
+        factor_root, base_root, out_dirs, ic_info_by_horizon, day, score_method, n_groups
     )
 
 
@@ -211,6 +212,7 @@ def run_multi_factor_quantile(
     score_method: str = "rank",
     factor_pool: str = "threshold",
     whitelist_path: str | None = None,
+    n_groups: int = 10,
 ):
     """
     Parameters
@@ -222,9 +224,10 @@ def run_multi_factor_quantile(
     threshold      : IC 筛选阈值，factor_pool="threshold" 时生效
     dates          : 指定日期列表；None 时自动扫描
     max_workers    : 并行进程数；建议 4~8，None 时用 CPU 核数
-    score_method   : "rank"（分位数得分）或 "zscore"（Z-score ±3截断）
+    score_method   : "rank"（分位数得分）/ "zscore"（Z-score ±3截断）/ "minmax"（MinMax 归一化）
     factor_pool    : "threshold" / "union" / "intersection"，决定因子集合和输出子目录
     whitelist_path : 白名单 txt 路径；factor_pool != "threshold" 时需提供
+    n_groups       : 分组数，默认 10
     """
     whitelist  = _load_whitelist(whitelist_path) if whitelist_path else None
     ic_weights = load_ic_weights(ic_stats_root, threshold=threshold, whitelist=whitelist)
@@ -253,7 +256,7 @@ def run_multi_factor_quantile(
             and os.path.splitext(f)[0].isdigit()
         )
 
-    base_out = os.path.join(eval_root, "multi_factor_quantile", factor_pool, score_method)
+    base_out = os.path.join(eval_root, "multi_factor_quantile", f"g{n_groups}", factor_pool, score_method)
     out_dirs: dict[str, str] = {}
     for ret_h in _RET_HORIZONS:
         d = os.path.join(base_out, ret_h)
@@ -262,7 +265,7 @@ def run_multi_factor_quantile(
         _save_weights(d, ic_weights[ret_h])
 
     tasks = [
-        (factor_root, base_root, out_dirs, ic_weights, day, score_method)
+        (factor_root, base_root, out_dirs, ic_weights, day, score_method, n_groups)
         for day in dates
     ]
 
