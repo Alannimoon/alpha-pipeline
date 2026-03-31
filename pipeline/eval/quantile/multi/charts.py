@@ -227,7 +227,7 @@ def _build_cum_tick_chart(parquet_dir: str) -> None:
     ax.set_title("Multi-Factor Composite  Cross-Day Tick Cumulative Return")
     ax.set_xticks(tick_positions)
     ax.set_xticklabels(tick_labels, rotation=45, ha="right", fontsize=8)
-    ax.legend(loc="upper left", ncol=len(g_cols) + 1, fontsize=7)
+    ax.legend(loc="upper left", ncol=min(len(g_cols) + 1, 11), fontsize=7)
     fig.tight_layout()
     fig.savefig(os.path.join(parquet_dir, "_chart_tick.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -302,7 +302,7 @@ def _build_intraday_slot_charts(parquet_dir: str) -> None:
         ax.set_title(f"Multi-Factor Composite  Slot {slot_idx}: {label}  Daily Cumulative Return")
         ax.set_xticks(tick_positions)
         ax.set_xticklabels(tick_labels_ax, rotation=45, ha="right", fontsize=8)
-        ax.legend(loc="upper left", ncol=len(g_cols) + 1, fontsize=7)
+        ax.legend(loc="upper left", ncol=min(len(g_cols) + 1, 11), fontsize=7)
         fig.tight_layout()
         safe_label = label.replace(":", "").replace("-", "_")
         fig.savefig(
