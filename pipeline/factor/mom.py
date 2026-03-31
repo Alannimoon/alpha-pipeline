@@ -28,7 +28,7 @@ Mom —— 价格动量因子（Price Momentum）。
 import numpy as np
 import pandas as pd
 
-from ._core import TICKS_PER_MIN, is_limit_tick
+from ._core import TICKS_PER_MIN
 
 WINDOWS_MIN = [5, 10, 20, 30, 45, 60, 90]
 
@@ -42,7 +42,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     """
     can_use = df["CanUsePrice"].to_numpy(bool)
     log_p   = np.where(can_use, np.log(df["Price"].to_numpy(np.float64)), np.nan)
-    limit   = is_limit_tick(df)
 
     out = {}
 
@@ -60,11 +59,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         valid = can_use & can_use_lag
         val   = np.where(valid, log_p - log_p_lag, np.nan)
 
-        limit_lag = np.zeros(len(limit), dtype=bool)
-        limit_lag[w:] = limit[:-w]
-        has_limit = (limit | limit_lag) & valid
-
-        out[f"mom_{m}m"]           = val
-        out[f"mom_{m}m_has_limit"] = has_limit
+        out[f"mom_{m}m"] = val
 
     return pd.DataFrame(out, index=df.index)

@@ -43,7 +43,6 @@ BidPrice1-5, AskPrice1-5, BidVolume1-5, AskVolume1-5
 """
 
 import os
-from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -145,15 +144,16 @@ def _compute_wmid(df: pd.DataFrame) -> pd.Series:
 
 # ── 单文件处理 ────────────────────────────────────────────────────────────────
 
-def process_one_file(in_path: str, out_path: str) -> dict:
+def process_one_file(in_path: str) -> tuple[dict, pd.DataFrame]:
     """
-    处理单只股票日，写出 base CSV，返回 summary dict。
+    处理单只股票日，返回 (summary_dict, output_df)。
+    output_df 由调用方按天汇总后写入 base/{date}.parquet。
     """
     secid = os.path.splitext(os.path.basename(in_path))[0]
 
-    df = pd.read_csv(in_path, usecols=lambda c: c in _NEEDED)
+    df = pd.read_parquet(in_path)
 
-    # 数值转换
+    # parquet 已保留数值类型，保留此步作为防御性保障
     num_cols = ["PreCloPrice"] + _5L
     for c in num_cols:
         if c in df.columns:
@@ -224,10 +224,15 @@ def process_one_file(in_path: str, out_path: str) -> dict:
         if c in df.columns:
             out[c] = df[c].values
 
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    out.to_csv(out_path, index=False)
+    # 前向收益率（与 _core.load_data 逻辑一致）
+    price_s = pd.Series(price, index=df.index, dtype=float)
+    for h in (100, 200, 300):
+        fut_price   = price_s.shift(-h)
+        fut_can_use = can_use_price.shift(-h).to_numpy(dtype=bool, na_value=False)
+        valid       = can_use_price & fut_can_use
+        out[f"ret_fwd_{h}"] = np.where(valid, fut_price / price_s - 1, np.nan)
 
-    return {
+    summary = {
         "SecurityID":          secid,
         "Rows":                len(out),
         "NormalWmidTicks":     int(is_normal.sum()),
@@ -237,18 +242,19 @@ def process_one_file(in_path: str, out_path: str) -> dict:
         "CanUseDoubleTicks":   int(can_use_double.sum()),
         "CanUseFiveTicks":     int(can_use_five.sum()),
     }
+    return summary, out
 
 
 # ── 批量入口 ──────────────────────────────────────────────────────────────────
 
-def _worker(args) -> dict:
-    in_path, out_path, day = args
+def _worker(args) -> tuple[dict, pd.DataFrame | None]:
+    in_path, day = args
     secid = os.path.splitext(os.path.basename(in_path))[0]
     try:
-        result = process_one_file(in_path, out_path)
-        return {"Date": day, "Status": "OK", **result}
+        summary, df = process_one_file(in_path)
+        return {"Date": day, "Status": "OK", **summary}, df
     except Exception as e:
-        return {"Date": day, "SecurityID": secid, "Status": f"FAIL: {e}"}
+        return {"Date": day, "SecurityID": secid, "Status": f"FAIL: {e}"}, None
 
 
 def run_base(
@@ -276,39 +282,57 @@ def run_base(
             and os.path.isdir(os.path.join(cleaned_root, d))
         )
 
-    all_tasks = []
+    # 按天组织任务，避免一次性提交全量 futures
+    tasks_by_day: dict[str, list] = {}
     for day in dates:
-        in_dir  = os.path.join(cleaned_root, day)
-        out_dir = os.path.join(base_root, day)
+        in_dir = os.path.join(cleaned_root, day)
         stock_files = sorted(
             f for f in os.listdir(in_dir)
-            if f.endswith(".csv") and not f.startswith("_")
+            if f.endswith(".parquet") and not f.startswith("_")
         )
         if not stock_files:
             continue
-        for f in stock_files:
-            all_tasks.append((os.path.join(in_dir, f), os.path.join(out_dir, f), day))
+        tasks_by_day[day] = [
+            (os.path.join(in_dir, f), day)
+            for f in stock_files
+        ]
+
+    total       = sum(len(v) for v in tasks_by_day.values())
+    all_results: list[dict] = []
+
+    def _consolidate(day: str, pairs: list[tuple[dict, pd.DataFrame | None]]) -> None:
+        """合并单日所有股票结果 → 写 base/{day}.parquet，收集 summary。"""
+        summaries = [s for s, _ in pairs]
+        dfs       = [df for _, df in pairs if df is not None]
+        if dfs:
+            combined = (pd.concat(dfs, ignore_index=True)
+                        .sort_values(["SampleTime", "SecurityID"])
+                        .reset_index(drop=True))
+            combined.to_parquet(os.path.join(base_root, f"{day}.parquet"), index=False)
+        all_results.extend(summaries)
 
     if max_workers == 1:
-        iter_ = tqdm(all_tasks, desc="base") if tqdm else all_tasks
-        results = [_worker(t) for t in iter_]
+        pbar = tqdm(total=total, desc="base") if tqdm else None
+        for day, day_tasks in tasks_by_day.items():
+            pairs = []
+            for t in day_tasks:
+                pairs.append(_worker(t))
+                if pbar: pbar.update(1)
+            _consolidate(day, pairs)
+        if pbar: pbar.close()
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            futs  = [pool.submit(_worker, t) for t in all_tasks]
-            iter_ = tqdm(as_completed(futs), total=len(futs), desc="base") \
-                    if tqdm else as_completed(futs)
-            results = [f.result() for f in iter_]
-
-    day_map = defaultdict(list)
-    for r in results:
-        day_map[r["Date"]].append(r)
-    for day, day_results in sorted(day_map.items()):
-        out_dir = os.path.join(base_root, day)
-        os.makedirs(out_dir, exist_ok=True)
-        pd.DataFrame(day_results).sort_values("SecurityID").reset_index(drop=True) \
-          .to_csv(os.path.join(out_dir, "_summary.csv"), index=False)
+            pbar = tqdm(total=total, desc="base") if tqdm else None
+            for day, day_tasks in tasks_by_day.items():
+                futs = [pool.submit(_worker, t) for t in day_tasks]
+                pairs = []
+                for f in as_completed(futs):
+                    pairs.append(f.result())
+                    if pbar: pbar.update(1)
+                _consolidate(day, pairs)
+            if pbar: pbar.close()
 
     summary_path = os.path.join(base_root, "_summary.csv")
-    pd.DataFrame(results).sort_values(["Date", "SecurityID"]).reset_index(drop=True) \
+    pd.DataFrame(all_results).sort_values(["Date", "SecurityID"]).reset_index(drop=True) \
       .to_csv(summary_path, index=False)
     print(f"Base 生成完成，汇总：{summary_path}")

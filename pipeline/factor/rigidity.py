@@ -38,7 +38,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from ._core import is_limit_tick, window_valid_mask, rolling_any, TICKS_PER_MIN
+from ._core import window_valid_mask, TICKS_PER_MIN
 
 WINDOWS_MIN       = [10, 20, 30, 45, 60, 90, 105]
 MAX_INVALID_RATIO = 0.10
@@ -153,23 +153,20 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     """
     can_use    = df["CanUsePrice"].to_numpy(bool)
     price      = df["Price"].to_numpy(np.float64)
-    limit      = is_limit_tick(df)
     n          = len(df)
     valid_tick = can_use & np.isfinite(price)
 
     out = {}
 
     for m in WINDOWS_MIN:
-        w      = m * TICKS_PER_MIN
-        w_ok   = window_valid_mask(can_use, w, MAX_INVALID_RATIO)
-        hl_arr = np.where(w_ok, rolling_any(limit, w), False)
+        w    = m * TICKS_PER_MIN
+        w_ok = window_valid_mask(can_use, w, MAX_INVALID_RATIO)
 
         if n < w:
             val = np.full(n, np.nan)
         else:
             val = _rigidity_window(price, valid_tick, w_ok, w, EPS)
 
-        out[f"rigidity_{m}m"]           = val
-        out[f"rigidity_{m}m_has_limit"] = hl_arr.astype(bool)
+        out[f"rigidity_{m}m"] = val
 
     return pd.DataFrame(out, index=df.index)

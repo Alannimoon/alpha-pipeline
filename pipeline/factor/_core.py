@@ -2,82 +2,24 @@
 因子计算共享工具。
 
 包含：
-- 数据加载（合并 base + returns）
 - 窗口有效性检查（基于 CanUsePrice 比例）
 - 滚动均值（跳过无效 tick）
-- 滚动 OR（窗口内是否存在涨跌停）
-- IsLimitTick 判断
+
+数据加载由 compute.py 统一负责：每天读一次 base/{date}.parquet，
+按 SecurityID 分组后将单股 DataFrame 传入各因子 compute() 函数。
 """
 
 import numpy as np
 import pandas as pd
 
-# ── 列名常量 ──────────────────────────────────────────────────────────────────
+# ── 列名常量（供各因子模块 import 使用）────────────────────────────────────────
 
 ASK_PRICE_COLS = [f"AskPrice{i}" for i in range(1, 6)]
 ASK_VOL_COLS   = [f"AskVolume{i}" for i in range(1, 6)]
 BID_PRICE_COLS = [f"BidPrice{i}" for i in range(1, 6)]
 BID_VOL_COLS   = [f"BidVolume{i}" for i in range(1, 6)]
 
-_BASE_COLS = [
-    "Date", "SampleTime", "SecurityID", "Market",
-    "Price", "CumVolume",
-    "CanUsePrice", "CanUseDoubleSideBook", "CanUseFiveLevelBook",
-    *ASK_PRICE_COLS, *ASK_VOL_COLS, *BID_PRICE_COLS, *BID_VOL_COLS,
-]
-
 TICKS_PER_MIN = 20   # 3 秒/tick
-
-
-# ── 数据加载 ──────────────────────────────────────────────────────────────────
-
-def load_data(base_path: str, horizons: list[int] = None) -> pd.DataFrame:
-    """
-    读取单只股票的 base 文件，内联计算前向收益率，返回完整 DataFrame。
-
-    收益率定义：ret_fwd_{h} = P(t+h)/P(t) - 1
-    仅当 CanUsePrice(t) 和 CanUsePrice(t+h) 均为 True 时有效，否则为 NaN。
-    """
-    if horizons is None:
-        horizons = [100, 200, 300]
-
-    df = pd.read_csv(
-        base_path,
-        dtype={"Date": str, "SecurityID": str, "SampleTime": str},
-        usecols=lambda c: c in _BASE_COLS,
-    )
-
-    num_cols = [
-        "Price", "CumVolume",
-        *ASK_PRICE_COLS, *ASK_VOL_COLS, *BID_PRICE_COLS, *BID_VOL_COLS,
-    ]
-    for c in num_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    for c in ("CanUsePrice", "CanUseDoubleSideBook", "CanUseFiveLevelBook"):
-        df[c] = df[c].astype(bool)
-
-    # 内联计算前向收益率（逻辑与原 returns.py 完全相同）
-    price   = df["Price"]
-    can_use = df["CanUsePrice"]
-    for h in horizons:
-        fut_price   = price.shift(-h)
-        fut_can_use = can_use.shift(-h).to_numpy(dtype=bool, na_value=False)
-        valid = can_use & fut_can_use
-        df[f"ret_fwd_{h}"] = np.where(valid, fut_price / price - 1, np.nan)
-
-    return df
-
-
-# ── 逐 tick 工具 ──────────────────────────────────────────────────────────────
-
-def is_limit_tick(df: pd.DataFrame) -> np.ndarray:
-    """
-    判断每个 tick 是否为涨跌停：
-      CanUsePrice=True（有效价格）且 CanUseDoubleSideBook=False（单边盘口）
-    返回 bool 数组。
-    """
-    return df["CanUsePrice"].to_numpy(bool) & ~df["CanUseDoubleSideBook"].to_numpy(bool)
 
 
 # ── 窗口级工具 ────────────────────────────────────────────────────────────────
@@ -114,12 +56,3 @@ def rolling_mean_masked(values: np.ndarray, mask: np.ndarray, window: int) -> np
     return pd.Series(values).where(mask).rolling(window, min_periods=1).mean().to_numpy()
 
 
-def rolling_any(bool_arr: np.ndarray, window: int) -> np.ndarray:
-    """
-    滚动 OR：窗口内任意一个 tick 为 True 则返回 True。
-
-    min_periods=window：历史不足时返回 False（与因子有效性对齐）。
-    """
-    s = pd.Series(bool_arr.astype(np.float64)).rolling(window, min_periods=window).max().to_numpy()
-    # max=1.0 → True；max=0.0 → False；NaN（历史不足）→ False
-    return s == 1.0

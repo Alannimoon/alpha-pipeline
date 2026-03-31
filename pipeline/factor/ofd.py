@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 
 from ._core import (
-    is_limit_tick, window_valid_mask, rolling_mean_masked, rolling_any, TICKS_PER_MIN,
+    window_valid_mask, rolling_mean_masked, TICKS_PER_MIN,
     ASK_PRICE_COLS, ASK_VOL_COLS, BID_PRICE_COLS, BID_VOL_COLS,
 )
 
@@ -53,7 +53,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     列名：ofd_15m, ofd_15m_has_limit, ofd_30m, ...
     """
     can_use_l5 = df["CanUseFiveLevelBook"].to_numpy(bool)
-    limit      = is_limit_tick(df)
 
     bidp = df[BID_PRICE_COLS].to_numpy(np.float64)   # (n, 5)
     askp = df[ASK_PRICE_COLS].to_numpy(np.float64)
@@ -90,14 +89,12 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     out = {}
 
     for m in WINDOWS_MIN:
-        w      = m * TICKS_PER_MIN
-        w_ok   = window_valid_mask(np.isfinite(ofd_raw), w, MAX_INVALID_RATIO)
-        hl_arr = np.where(w_ok, rolling_any(limit, w), False)
+        w    = m * TICKS_PER_MIN
+        w_ok = window_valid_mask(np.isfinite(ofd_raw), w, MAX_INVALID_RATIO)
 
         val = rolling_mean_masked(ofd_raw, can_use_l5, w)
         val = np.where(w_ok, val, np.nan)
 
-        out[f"ofd_{m}m"]           = val
-        out[f"ofd_{m}m_has_limit"] = hl_arr.astype(bool)
+        out[f"ofd_{m}m"] = val
 
     return pd.DataFrame(out, index=df.index)

@@ -5,16 +5,30 @@
 --------------
 1. 在 pipeline/factor/ 下新建 <name>.py，实现：
        def compute(df: pd.DataFrame) -> pd.DataFrame:
-           ...  # 输入完整 stock-day df，输出只含因子列的 df
+           ...  # 输入单只股票单日 DataFrame，输出只含因子列的 DataFrame
 2. 在本文件的 _FACTOR_MAP 里注册：
        from . import <name>
        _FACTOR_MAP = {..., "<name>": <name>}
 
-每个因子单独存入 factor_root/<factor_name>/ 目录，互不干扰。
+输入
+----
+每天读一次 base/{date}.parquet（long format，含 Price/masks/盘口/ret_fwd），
+按 SecurityID 分组，将单股 DataFrame 分发给各因子的 compute() 函数。
+
+输出
+----
+factor/{factor_name}/{date}.parquet（long format）
+列：Date, SampleTime, SecurityID, Market, {factor_cols}...
+ret_fwd 不写入因子文件，eval 阶段直接从 base parquet 读取。
+
+并行策略
+--------
+任务粒度为「每天」而非「每股票」：
+  worker 接收字符串参数，自行读 parquet、处理所有股票、写输出，
+  跨进程仅传递路径字符串，序列化开销趋近于零。
 """
 
 import os
-from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
@@ -24,46 +38,77 @@ try:
 except ImportError:
     tqdm = None
 
-from ._core import load_data
 from . import bap, mom, acc_mom, neg_skew, amp_slice, rigidity, pv_corr, rsrs, oir, ofd
 
 # ── 注册因子 ──────────────────────────────────────────────────────────────────
-# 新增因子：import 后加入此字典即可
 _FACTOR_MAP = {
-    "bap": bap,
-    "mom": mom,
-    "acc_mom": acc_mom,
-    "neg_skew": neg_skew,
+    "bap":       bap,
+    "mom":       mom,
+    "acc_mom":   acc_mom,
+    "neg_skew":  neg_skew,
     "amp_slice": amp_slice,
-    "rigidity": rigidity,
-    "pv_corr": pv_corr,
-    "rsrs": rsrs,
-    "oir": oir,
-    "ofd": ofd,
+    "rigidity":  rigidity,
+    "pv_corr":   pv_corr,
+    "rsrs":      rsrs,
+    "oir":       oir,
+    "ofd":       ofd,
 }
 
 
-# ── 单股票日计算 ──────────────────────────────────────────────────────────────
+# ── 单股票计算 ────────────────────────────────────────────────────────────────
 
-def _worker(args) -> dict:
-    day, secid, base_path, out_path, horizons, factor_name = args
+def _compute_stock(
+    day: str, secid, stock_df: pd.DataFrame, factor_name: str
+) -> tuple[dict, pd.DataFrame | None]:
+    """计算单只股票单日因子值，返回 (summary_dict, output_df)。"""
     try:
-        df      = load_data(base_path, horizons)
-        meta    = df[["Date", "SampleTime", "SecurityID", "Market",
-                      "ret_fwd_100", "ret_fwd_200", "ret_fwd_300"]].copy()
-        factors = _FACTOR_MAP[factor_name].compute(df)
+        factors = _FACTOR_MAP[factor_name].compute(stock_df)
+        meta    = stock_df[["Date", "SampleTime", "SecurityID", "Market"]]
         out     = pd.concat([meta, factors], axis=1)
-        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        out.to_csv(out_path, index=False)
-
-        value_cols = [c for c in factors.columns if not c.endswith("_has_limit")]
         summary = {"Date": day, "SecurityID": secid, "Status": "OK", "Rows": len(out)}
-        for c in value_cols:
+        for c in factors.columns:
             summary[f"nnz_{c}"] = int(out[c].notna().sum())
-        return summary
-
+        return summary, out
     except Exception as e:
-        return {"Date": day, "SecurityID": secid, "Status": f"FAIL: {e}"}
+        return {"Date": day, "SecurityID": secid, "Status": f"FAIL: {e}"}, None
+
+
+# ── 单日计算（Worker 执行体）─────────────────────────────────────────────────
+
+def _process_day(
+    day: str, factor_name: str, base_root: str, factor_out_root: str
+) -> list[dict]:
+    """
+    读取单日 base parquet → 对所有股票计算因子 → 写出 factor parquet。
+    返回该日所有股票的 summary 列表。
+    跨进程仅接收字符串，无 DataFrame 序列化开销。
+    """
+    base_path = os.path.join(base_root, f"{day}.parquet")
+    if not os.path.exists(base_path):
+        return []
+
+    base_df   = pd.read_parquet(base_path)
+    summaries: list[dict]          = []
+    dfs:       list[pd.DataFrame]  = []
+
+    for secid, sdf in base_df.groupby("SecurityID", sort=True):
+        summary, out = _compute_stock(day, secid, sdf.reset_index(drop=True), factor_name)
+        summaries.append(summary)
+        if out is not None:
+            dfs.append(out)
+
+    if dfs:
+        (pd.concat(dfs, ignore_index=True)
+         .sort_values(["SampleTime", "SecurityID"])
+         .reset_index(drop=True)
+         .to_parquet(os.path.join(factor_out_root, f"{day}.parquet"), index=False))
+
+    return summaries
+
+
+def _worker(args) -> list[dict]:
+    day, factor_name, base_root, factor_out_root = args
+    return _process_day(day, factor_name, base_root, factor_out_root)
 
 
 # ── 批量入口 ──────────────────────────────────────────────────────────────────
@@ -72,98 +117,59 @@ def run_factors(
     base_root: str,
     factor_root: str,
     factor_name: str,
-    horizons: list[int],
     dates: list | None = None,
     max_workers: int | None = None,
 ):
     """
-    批量计算单个因子。收益率在读取 base 文件时内联计算，无需单独的 returns 目录。
+    批量计算单个因子。
 
     Parameters
     ----------
-    base_root   : base 数据根目录
-    factor_root : 输出根目录（因子文件写入 factor_root/{factor_name}/{date}/）
+    base_root   : base 数据根目录（含 {date}.parquet 文件）
+    factor_root : 输出根目录（因子文件写入 factor_root/{factor_name}/{date}.parquet）
     factor_name : 因子名称，须在 _FACTOR_MAP 中注册
-    horizons    : 前向收益率窗口列表（tick 数），如 [100, 200, 300]
     dates       : 指定日期列表；None 时自动扫描
     max_workers : 并行进程数
     """
     if factor_name not in _FACTOR_MAP:
         raise ValueError(f"未知因子 '{factor_name}'，可选：{list(_FACTOR_MAP)}")
+
     factor_out_root = os.path.join(factor_root, factor_name)
     os.makedirs(factor_out_root, exist_ok=True)
 
     if dates is None:
         dates = sorted(
-            d for d in os.listdir(base_root)
-            if len(d) == 8 and d.isdigit()
-            and os.path.isdir(os.path.join(base_root, d))
+            os.path.splitext(f)[0]
+            for f in os.listdir(base_root)
+            if f.endswith(".parquet") and not f.startswith("_")
+            and len(os.path.splitext(f)[0]) == 8
+            and os.path.splitext(f)[0].isdigit()
         )
 
-    all_tasks = []
-    for day in dates:
-        base_day_dir = os.path.join(base_root, day)
-        out_day_dir  = os.path.join(factor_out_root, day)
-        stock_files = sorted(
-            f for f in os.listdir(base_day_dir)
-            if f.endswith(".csv") and not f.startswith("_")
-        )
-        for f in stock_files:
-            all_tasks.append((
-                day,
-                os.path.splitext(f)[0],
-                os.path.join(base_day_dir, f),
-                os.path.join(out_day_dir, f),
-                horizons,
-                factor_name,
-            ))
-
-    # 按交易日分组，避免一次性提交数十万任务导致 Future 对象堆积卡死
-    from itertools import groupby
-    tasks_by_day = {
-        day: list(group)
-        for day, group in groupby(all_tasks, key=lambda t: t[0])
-    }
-
-    def _write_day_summary(day_results, out_day_dir):
-        os.makedirs(out_day_dir, exist_ok=True)
-        pd.DataFrame(day_results).sort_values("SecurityID").reset_index(drop=True) \
-          .to_csv(os.path.join(out_day_dir, "_summary.csv"), index=False)
+    tasks        = [(day, factor_name, base_root, factor_out_root) for day in dates]
+    all_results: list[dict] = []
 
     if max_workers == 1:
-        iter_ = tqdm(all_tasks, desc="factors") if tqdm else all_tasks
-        for day, group in groupby(iter_, key=lambda t: t[0]):
-            day_results = [_worker(t) for t in group]
-            _write_day_summary(day_results, os.path.join(factor_out_root, day))
+        day_iter = tqdm(tasks, desc=f"factors/{factor_name}") if tqdm else tasks
+        for t in day_iter:
+            all_results.extend(_worker(t))
     else:
-        pbar = tqdm(total=len(all_tasks), desc="factors") if tqdm else None
+        # 提交所有天，进程池按 max_workers 并发执行
         pool = ProcessPoolExecutor(max_workers=max_workers)
         try:
-            for day, day_tasks in tasks_by_day.items():
-                futs = [pool.submit(_worker, t) for t in day_tasks]
-                day_results = []
-                for f in as_completed(futs):
-                    day_results.append(f.result())
-                    if pbar:
-                        pbar.update(1)
-                _write_day_summary(day_results, os.path.join(factor_out_root, day))
+            futs  = [pool.submit(_worker, t) for t in tasks]
+            inner = (
+                tqdm(as_completed(futs), total=len(futs), desc=f"factors/{factor_name}")
+                if tqdm else as_completed(futs)
+            )
+            for f in inner:
+                all_results.extend(f.result())
         finally:
-            # SIGTERM 直接杀掉 worker，跳过 Python/LLVM 清理，避免 numba 导入引发的退出死锁
             for p in pool._processes.values():
                 p.terminate()
             pool.shutdown(wait=False)
-        if pbar:
-            pbar.close()
 
-    # 全局汇总：拼接各天已写好的 per-day summary（比从内存 dict 构建快）
     summary_path = os.path.join(factor_out_root, "_summary.csv")
-    day_dirs = sorted(
-        d for d in os.listdir(factor_out_root)
-        if len(d) == 8 and d.isdigit()
-    )
-    pd.concat(
-        [pd.read_csv(os.path.join(factor_out_root, d, "_summary.csv"), dtype=str)
-         for d in day_dirs],
-        ignore_index=True,
-    ).to_csv(summary_path, index=False)
+    pd.DataFrame(all_results).sort_values(["Date", "SecurityID"]).reset_index(drop=True) \
+      .to_csv(summary_path, index=False)
     print(f"因子计算完成，汇总：{summary_path}")

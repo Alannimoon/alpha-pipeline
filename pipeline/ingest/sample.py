@@ -129,7 +129,7 @@ def resample_one_file(in_path: str, out_path: str, day: str,
     out_df = sampled[ordered]
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    out_df.to_csv(out_path, index=False)
+    out_df.to_parquet(out_path, index=False)
 
     max_gap = sampled["GapSec"].max()
     return {
@@ -144,6 +144,13 @@ def resample_one_file(in_path: str, out_path: str, day: str,
 
 
 # ── 批量入口 ──────────────────────────────────────────────────────────────────
+
+def _write_day_summary(root: str, day: str, results: list[dict]) -> None:
+    out_dir = os.path.join(root, day)
+    os.makedirs(out_dir, exist_ok=True)
+    pd.DataFrame(results).sort_values("SecurityID").reset_index(drop=True) \
+      .to_csv(os.path.join(out_dir, "_summary.csv"), index=False)
+
 
 def _worker(args):
     """ProcessPoolExecutor 的 worker，捕获异常确保不中断整体进度。"""
@@ -181,7 +188,8 @@ def run_sample(raw_root: str, sampled_root: str, dates: list[str] | None = None,
             and os.path.isdir(os.path.join(raw_root, d))
         )
 
-    all_tasks = []
+    # 按天组织任务，避免一次性提交全量 futures
+    tasks_by_day: dict[str, list] = {}
     for day in dates:
         in_dir  = os.path.join(raw_root, day)
         out_dir = os.path.join(sampled_root, day)
@@ -191,33 +199,42 @@ def run_sample(raw_root: str, sampled_root: str, dates: list[str] | None = None,
         )
         if not stock_files:
             continue
-        for f in stock_files:
-            all_tasks.append((
+        tasks_by_day[day] = [
+            (
                 os.path.join(in_dir, f),
-                os.path.join(out_dir, f),
+                os.path.join(out_dir, os.path.splitext(f)[0] + ".parquet"),
                 day, freq, am_start, am_end, pm_start, pm_end,
-            ))
+            )
+            for f in stock_files
+        ]
+
+    total      = sum(len(v) for v in tasks_by_day.values())
+    all_results: list[dict] = []
 
     if max_workers == 1:
-        iter_ = tqdm(all_tasks, desc="sample") if tqdm else all_tasks
-        results = [_worker(t) for t in iter_]
+        pbar = tqdm(total=total, desc="sample") if tqdm else None
+        for day, day_tasks in tasks_by_day.items():
+            day_results = []
+            for t in day_tasks:
+                day_results.append(_worker(t))
+                if pbar: pbar.update(1)
+            _write_day_summary(sampled_root, day, day_results)
+            all_results.extend(day_results)
+        if pbar: pbar.close()
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            futs  = [pool.submit(_worker, t) for t in all_tasks]
-            iter_ = tqdm(as_completed(futs), total=len(futs), desc="sample") \
-                    if tqdm else as_completed(futs)
-            results = [f.result() for f in iter_]
-
-    day_map = defaultdict(list)
-    for r in results:
-        day_map[r["Date"]].append(r)
-    for day, day_results in sorted(day_map.items()):
-        out_dir = os.path.join(sampled_root, day)
-        os.makedirs(out_dir, exist_ok=True)
-        pd.DataFrame(day_results).sort_values("SecurityID").reset_index(drop=True) \
-          .to_csv(os.path.join(out_dir, "_summary.csv"), index=False)
+            pbar = tqdm(total=total, desc="sample") if tqdm else None
+            for day, day_tasks in tasks_by_day.items():
+                futs = [pool.submit(_worker, t) for t in day_tasks]
+                day_results = []
+                for f in as_completed(futs):
+                    day_results.append(f.result())
+                    if pbar: pbar.update(1)
+                _write_day_summary(sampled_root, day, day_results)
+                all_results.extend(day_results)
+            if pbar: pbar.close()
 
     summary_path = os.path.join(sampled_root, "_summary.csv")
-    pd.DataFrame(results).sort_values(["Date", "SecurityID"]).reset_index(drop=True) \
+    pd.DataFrame(all_results).sort_values(["Date", "SecurityID"]).reset_index(drop=True) \
       .to_csv(summary_path, index=False)
     print(f"重采样完成，汇总：{summary_path}")

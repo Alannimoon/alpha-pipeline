@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from ._core import (
-    is_limit_tick, window_valid_mask, rolling_any, TICKS_PER_MIN,
+    window_valid_mask, TICKS_PER_MIN,
     ASK_PRICE_COLS, ASK_VOL_COLS, BID_PRICE_COLS, BID_VOL_COLS,
 )
 
@@ -50,7 +50,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     列名：rsrs_30m, rsrs_30m_has_limit, rsrs_45m, ...
     """
     can_use_l5 = df["CanUseFiveLevelBook"].to_numpy(bool)
-    limit      = is_limit_tick(df)
 
     # ── 五档量加权买/卖价格 ───────────────────────────────────────────────────
     bidp = df[BID_PRICE_COLS].to_numpy(np.float64)
@@ -78,9 +77,8 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     out = {}
 
     for m in WINDOWS_MIN:
-        w      = m * TICKS_PER_MIN
-        w_ok   = window_valid_mask(can_use_l5, w, MAX_INVALID_RATIO)
-        hl_arr = np.where(w_ok, rolling_any(limit, w), False)
+        w    = m * TICKS_PER_MIN
+        w_ok = window_valid_mask(can_use_l5, w, MAX_INVALID_RATIO)
 
         # ── rolling 回归统计量（向量化）────────────────────────────────────────
         roll_x  = xs.rolling(w, min_periods=2)
@@ -102,7 +100,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
                 np.nan,
             )
 
-        out[f"rsrs_{m}m"]           = np.where(w_ok, beta, np.nan)
-        out[f"rsrs_{m}m_has_limit"] = hl_arr.astype(bool)
+        out[f"rsrs_{m}m"] = np.where(w_ok, beta, np.nan)
 
     return pd.DataFrame(out, index=df.index)

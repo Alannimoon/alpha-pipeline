@@ -28,7 +28,7 @@ NegSkew —— 负偏度因子（Negative Skewness）。
 import numpy as np
 import pandas as pd
 
-from ._core import is_limit_tick, window_valid_mask, rolling_any, TICKS_PER_MIN
+from ._core import window_valid_mask, TICKS_PER_MIN
 
 WINDOWS_MIN       = [15, 30, 45, 60]
 MAX_INVALID_RATIO = 0.10
@@ -44,7 +44,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     """
     can_use = df["CanUsePrice"].to_numpy(bool)
     price   = df["Price"].to_numpy(np.float64)
-    limit   = is_limit_tick(df)
     n       = len(df)
 
     # ── 第一步：逐 tick 计算 r_1m ─────────────────────────────────────────────
@@ -72,10 +71,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         skew = r_1m_series.rolling(w).skew().to_numpy()
         val  = np.where(w_ok, -skew, np.nan)
 
-        # ── has_limit ─────────────────────────────────────────────────────────
-        has_limit = np.where(w_ok, rolling_any(limit, w_ok_len), False)
-
-        out[f"neg_skew_{m}m"]           = val
-        out[f"neg_skew_{m}m_has_limit"] = has_limit.astype(bool)
+        out[f"neg_skew_{m}m"] = val
 
     return pd.DataFrame(out, index=df.index)

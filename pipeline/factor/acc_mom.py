@@ -26,10 +26,7 @@ AccMom —— 加速度动量因子（Acceleration Momentum）。
 import numpy as np
 import pandas as pd
 
-from ._core import (
-    TICKS_PER_MIN,
-    is_limit_tick,
-)
+from ._core import TICKS_PER_MIN
 
 PAIRS = [
     (25, 50), (50, 100), (100, 200), (150, 300), (200, 400),
@@ -43,7 +40,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     列名：acc_mom_25_50t, acc_mom_25_50t_has_limit, acc_mom_50_100t, ...
     """
     can_use = df["CanUsePrice"].to_numpy(bool)
-    limit   = is_limit_tick(df)
     log_p   = np.where(can_use, np.log(df["Price"].to_numpy(np.float64)), np.nan)
     n       = len(df)
 
@@ -67,15 +63,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         raw = (log_p - log_p_short) - (log_p_short - log_p_long)
         val = np.where(valid, raw, np.nan)
 
-        # ── has_limit ────────────────────────────────────────────────────────
-        limit_short = np.zeros(n, dtype=bool)
-        limit_long  = np.zeros(n, dtype=bool)
-        limit_short[short:] = limit[:-short]
-        limit_long[long:]   = limit[:-long]
-        has_limit = (limit | limit_short | limit_long) & valid
-
-        col = f"acc_mom_{short}_{long}t"
-        out[col]                = val
-        out[f"{col}_has_limit"] = has_limit
+        out[f"acc_mom_{short}_{long}t"] = val
 
     return pd.DataFrame(out, index=df.index)

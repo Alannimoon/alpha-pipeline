@@ -34,7 +34,7 @@ PvCorr —— 价量相关性因子（Price-Volume Correlation）。
 import numpy as np
 import pandas as pd
 
-from ._core import is_limit_tick, window_valid_mask, rolling_mean_masked, rolling_any
+from ._core import window_valid_mask, rolling_mean_masked
 
 WINDOWS_TICK      = [100, 200, 300]
 MAX_INVALID_RATIO = 0.10
@@ -51,14 +51,12 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     can_use = df["CanUsePrice"].to_numpy(bool)
     price   = df["Price"].to_numpy(np.float64)
     cumvol  = df["CumVolume"].to_numpy(np.float64)
-    limit   = is_limit_tick(df)
     n       = len(df)
 
     out = {}
 
     for w in WINDOWS_TICK:
-        w_ok   = window_valid_mask(can_use, 4 * w, MAX_INVALID_RATIO)
-        hl_arr = np.where(w_ok, rolling_any(limit, 4 * w), False)
+        w_ok = window_valid_mask(can_use, 4 * w, MAX_INVALID_RATIO)
 
         # ── 第一步：lag-w 简单收益率 ─────────────────────────────────────────
         can_lag = np.zeros(n, dtype=bool)
@@ -102,7 +100,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         val_raw  = rolling_mean_masked(raw, raw_mask, w)
         val      = np.where(w_ok, val_raw, np.nan)
 
-        out[f"pv_corr_{w}t"]           = val
-        out[f"pv_corr_{w}t_has_limit"] = hl_arr.astype(bool)
+        out[f"pv_corr_{w}t"] = val
 
     return pd.DataFrame(out, index=df.index)

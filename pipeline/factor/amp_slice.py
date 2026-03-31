@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
 
-from ._core import is_limit_tick, window_valid_mask, rolling_any
+from ._core import window_valid_mask
 
 LOOKBACK_TICKS     = [300, 600, 900, 1200, 1500]
 GROUP_INTERVAL_SEC = 30
@@ -50,7 +50,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     """
     can_use = df["CanUsePrice"].to_numpy(bool)
     price   = df["Price"].to_numpy(np.float64)
-    limit   = is_limit_tick(df)
     n       = len(df)
 
     # CanUsePrice=False 的 tick 价格置 NaN，后续用 nan 系列函数跳过
@@ -62,13 +61,11 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         group_count = lookback // GROUP_LEN                            # 30/60/90/120/150
         k           = max(1, int(np.floor(group_count * QUANTILE_FRAC)))
 
-        w_ok   = window_valid_mask(can_use, lookback, MAX_INVALID_RATIO)
-        hl_arr = np.where(w_ok, rolling_any(limit, lookback), False)
-        val    = np.full(n, np.nan)
+        w_ok = window_valid_mask(can_use, lookback, MAX_INVALID_RATIO)
+        val  = np.full(n, np.nan)
 
         if n < lookback:
-            out[f"amp_slice_{lookback}t"]           = val
-            out[f"amp_slice_{lookback}t_has_limit"] = hl_arr.astype(bool)
+            out[f"amp_slice_{lookback}t"] = val
             continue
 
         # ── 滑动窗口视图（向量化，避免逐 tick 循环）──────────────────────────
@@ -79,8 +76,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         active_idx = np.where(active)[0]
 
         if len(active_idx) == 0:
-            out[f"amp_slice_{lookback}t"]           = val
-            out[f"amp_slice_{lookback}t_has_limit"] = hl_arr.astype(bool)
+            out[f"amp_slice_{lookback}t"] = val
             continue
 
         # ── 分组计算 ──────────────────────────────────────────────────────────
@@ -106,7 +102,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         # ── 写回原始 tick 位置（sliding_window index i → tick i+lookback-1）─
         val[active_idx + lookback - 1] = result
 
-        out[f"amp_slice_{lookback}t"]           = val
-        out[f"amp_slice_{lookback}t_has_limit"] = hl_arr.astype(bool)
+        out[f"amp_slice_{lookback}t"] = val
 
     return pd.DataFrame(out, index=df.index)

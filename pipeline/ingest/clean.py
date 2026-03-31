@@ -135,7 +135,7 @@ def _clean_one(args) -> dict:
         if secid in override_drop:
             return {**base, "Kept": False, "DropReason": "MANUAL_OVERRIDE", "MaxGapSec": None}
 
-        df = pd.read_csv(in_path)
+        df = pd.read_parquet(in_path)
         if len(df) == 0:
             return {**base, "Kept": False, "DropReason": "EMPTY_FILE", "MaxGapSec": None}
 
@@ -143,7 +143,7 @@ def _clean_one(args) -> dict:
             return {**base, "Kept": False, "DropReason": "ALL_DAY_SUSPEND", "MaxGapSec": None}
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        df.to_csv(out_path, index=False)
+        df.to_parquet(out_path, index=False)
 
         max_gap = df["GapSec"].max() if "GapSec" in df.columns else None
         return {
@@ -189,37 +189,50 @@ def run_clean(
             and os.path.isdir(os.path.join(sampled_root, d))
         )
 
-    all_tasks = []
+    # 按天组织任务，避免一次性提交全量 futures
+    tasks_by_day: dict[str, list] = {}
     for day in dates:
         in_dir  = os.path.join(sampled_root, day)
         out_dir = os.path.join(cleaned_root, day)
         stock_files = sorted(
             f for f in os.listdir(in_dir)
-            if f.endswith(".csv") and not f.startswith("_")
+            if f.endswith(".parquet") and not f.startswith("_")
         )
         if not stock_files:
             continue
         all_secids    = [os.path.splitext(f)[0].zfill(6) for f in stock_files]
         override_drop = _expand_overrides(override_rows, day, all_secids)
         os.makedirs(out_dir, exist_ok=True)
-        for f in stock_files:
-            all_tasks.append((
+        tasks_by_day[day] = [
+            (
                 os.path.join(in_dir, f),
                 os.path.join(out_dir, f),
                 day,
                 os.path.splitext(f)[0].zfill(6),
                 override_drop,
-            ))
+            )
+            for f in stock_files
+        ]
+
+    total   = sum(len(v) for v in tasks_by_day.values())
+    results = []
 
     if max_workers == 1:
-        iter_ = tqdm(all_tasks, desc="clean") if tqdm else all_tasks
-        results = [_clean_one(t) for t in iter_]
+        pbar = tqdm(total=total, desc="clean") if tqdm else None
+        for day_tasks in tasks_by_day.values():
+            for t in day_tasks:
+                results.append(_clean_one(t))
+                if pbar: pbar.update(1)
+        if pbar: pbar.close()
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            futs  = [pool.submit(_clean_one, t) for t in all_tasks]
-            iter_ = tqdm(as_completed(futs), total=len(futs), desc="clean") \
-                    if tqdm else as_completed(futs)
-            results = [f.result() for f in iter_]
+            pbar = tqdm(total=total, desc="clean") if tqdm else None
+            for day_tasks in tasks_by_day.values():
+                futs = [pool.submit(_clean_one, t) for t in day_tasks]
+                for f in as_completed(futs):
+                    results.append(f.result())
+                    if pbar: pbar.update(1)
+            if pbar: pbar.close()
 
     report = pd.DataFrame(results).sort_values(["Date", "SecurityID"]).reset_index(drop=True)
 

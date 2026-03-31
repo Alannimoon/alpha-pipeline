@@ -8,6 +8,7 @@
 """
 
 import glob
+import warnings
 import os
 
 import numpy as np
@@ -152,8 +153,10 @@ def _zscore_scores(f_mat: np.ndarray, clip_std: float = 3.0) -> np.ndarray:
     n_valid    = valid_mask.sum(axis=1, keepdims=True)
 
     f_nan  = np.where(valid_mask, f_mat, np.nan)
-    mu     = np.nanmean(f_nan, axis=1, keepdims=True)
-    sigma  = np.nanstd( f_nan, axis=1, keepdims=True)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mu    = np.nanmean(f_nan, axis=1, keepdims=True)
+        sigma = np.nanstd( f_nan, axis=1, keepdims=True)
 
     sigma_safe = np.where(sigma < 1e-9, 1.0, sigma)
     z = np.clip((f_nan - mu) / sigma_safe, -clip_std, clip_std)

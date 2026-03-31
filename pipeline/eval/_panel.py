@@ -1,9 +1,12 @@
 """
-IC 计算核心工具（供 cs_ic.py 使用）。
+IC 计算核心工具（供 ic/ 和 quantile/ 共用）。
 
-get_factor_cols  : 从 DataFrame 列名中提取指定因子的值列（去掉 _has_limit）
+get_factor_cols  : 从 DataFrame 列名中提取指定因子的值列
+build_wide_day   : 读取单日因子 + base parquet，pivot 成宽表字典
 compute_ic_pair  : 对一对宽表计算 Pearson IC 和 Spearman RankIC
 """
+
+import os
 
 import numpy as np
 import pandas as pd
@@ -11,18 +14,72 @@ import pandas as pd
 # 不属于因子值的列
 _META_COLS = {"Date", "SampleTime", "SecurityID", "Market"}
 
+_DEFAULT_RET_COLS = ["ret_fwd_100", "ret_fwd_200", "ret_fwd_300"]
+
+
+def build_wide_day(
+    factor_root: str,
+    base_root: str,
+    factor_name: str,
+    day: str,
+    ret_cols: list[str] | None = None,
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """
+    读取单日因子 + base parquet，pivot 成宽表字典。
+
+    Parameters
+    ----------
+    factor_root : 因子数据根目录（含 {factor_name}/{date}.parquet）
+    base_root   : base 数据根目录（含 {date}.parquet）
+    factor_name : 因子名称，如 "bap"
+    day         : 日期字符串，如 "20250102"
+    ret_cols    : 需要读取的收益率列名；None 时取默认三列
+
+    Returns
+    -------
+    wide       : {列名: DataFrame(index=SampleTime, columns=SecurityID)}
+                 包含所有因子列 + ret_cols
+    factor_cols: 本次有效的因子列名列表
+    失败时返回 ({}, [])
+    """
+    factor_path = os.path.join(factor_root, factor_name, f"{day}.parquet")
+    if not os.path.exists(factor_path):
+        return {}, []
+
+    factor_long = pd.read_parquet(factor_path)
+    factor_cols = get_factor_cols(factor_long, factor_name)
+    if not factor_cols:
+        return {}, []
+
+    if ret_cols is None:
+        ret_cols = _DEFAULT_RET_COLS
+
+    base_path = os.path.join(base_root, f"{day}.parquet")
+    base_long = pd.read_parquet(
+        base_path, columns=["SampleTime", "SecurityID"] + ret_cols
+    )
+
+    wide: dict[str, pd.DataFrame] = {}
+    for fc in factor_cols:
+        wide[fc] = factor_long.pivot(
+            index="SampleTime", columns="SecurityID", values=fc
+        )
+    for rc in ret_cols:
+        wide[rc] = base_long.pivot(
+            index="SampleTime", columns="SecurityID", values=rc
+        )
+
+    return wide, factor_cols
+
 
 def get_factor_cols(df: pd.DataFrame, factor_name: str) -> list[str]:
     """
-    返回 df 中属于 factor_name 的因子值列（排除 _has_limit 列）。
+    返回 df 中属于 factor_name 的因子值列。
 
     例：factor_name="bap" → ["bap_15m", "bap_30m", "bap_45m", "bap_60m", "bap_75m"]
     """
     prefix = f"{factor_name}_"
-    return [
-        c for c in df.columns
-        if c.startswith(prefix) and not c.endswith("_has_limit")
-    ]
+    return [c for c in df.columns if c.startswith(prefix)]
 
 
 def _pearson(f: np.ndarray, r: np.ndarray, axis: int) -> np.ndarray:

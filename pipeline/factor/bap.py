@@ -32,10 +32,8 @@ import pandas as pd
 
 from ._core import (
     TICKS_PER_MIN,
-    is_limit_tick,
     window_valid_mask,
     rolling_mean_masked,
-    rolling_any,
 )
 
 WINDOWS_MIN       = [15, 30, 45, 60, 75]
@@ -50,8 +48,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
 
     列名：bap_15m, bap_15m_has_limit, bap_30m, bap_30m_has_limit, ...
     """
-    can_use_l1    = df["CanUseDoubleSideBook"].to_numpy(bool)
-    limit_tick    = is_limit_tick(df)
+    can_use_l1 = df["CanUseDoubleSideBook"].to_numpy(bool)
 
     bidv1 = df["BidVolume1"].to_numpy(np.float64)
     askv1 = df["AskVolume1"].to_numpy(np.float64)
@@ -77,12 +74,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         # 窗口无效 → NaN
         val = np.where(w_valid, val, np.nan)
 
-        # ── 第四步：涨跌停 bool（窗口内是否出现过涨跌停 tick）────────────────
-        has_limit = rolling_any(limit_tick, w)
-        # 因子本身无效时，has_limit 无意义，置 False
-        has_limit = np.where(w_valid, has_limit, False)
-
-        out[f"bap_{m}m"]           = val
-        out[f"bap_{m}m_has_limit"] = has_limit.astype(bool)
+        out[f"bap_{m}m"] = val
 
     return pd.DataFrame(out, index=df.index)
