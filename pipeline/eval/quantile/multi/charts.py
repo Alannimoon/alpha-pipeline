@@ -106,7 +106,12 @@ def _build_summary(parquet_dir: str) -> None:
 def _build_cum_daily(parquet_dir: str) -> None:
     """
     直接对每日 parquet 求列和（= 日内 cumsum 的最后一行）→ 跨日 cumsum →
-    _cum_daily.csv（Date, g1..g{N}, long_short, n_ticks）。
+    _cum_daily.csv（Date, g1..g{N}, long_short, n_ticks,
+                    ls_{slot}, n_ticks_{slot}, ...  共 8 个时段）。
+
+    时段列命名规则：标签 "09:30-10:00" → safe 键 "0930_1000"
+      ls_0930_1000      : 跨日累计多空收益（g_last - g1，仅限该时段 tick）
+      n_ticks_0930_1000 : 跨日累计有效 tick 数（该时段）
     """
     files = _parquet_files(parquet_dir)
     if not files:
@@ -120,9 +125,18 @@ def _build_cum_daily(parquet_dir: str) -> None:
         if not g_cols:
             continue
         row = {"Date": day}
+        # ── 全时段 ────────────────────────────────────────────────────────────
         for gc in g_cols:
             row[gc] = float(df[gc].sum(skipna=True))
         row["n_ticks"] = int(df[g_cols[0]].notna().sum())
+        # ── 8 个 30 分钟时段 ──────────────────────────────────────────────────
+        for label, t_start, t_end in _INTRADAY_SLOTS:
+            safe = label.replace(":", "").replace("-", "_")
+            mask = (df["SampleTime"] >= t_start) & (df["SampleTime"] < t_end)
+            sub  = df.loc[mask]
+            row[f"ls_{safe}"]      = (float(sub[g_cols[-1]].sum(skipna=True))
+                                      - float(sub[g_cols[0]].sum(skipna=True)))
+            row[f"n_ticks_{safe}"] = int(sub[g_cols[0]].notna().sum())
         rows.append(row)
 
     if not rows:
@@ -133,12 +147,19 @@ def _build_cum_daily(parquet_dir: str) -> None:
         .sort_values("Date")
         .reset_index(drop=True)
     )
-    g_cols   = _g_cols(all_days)
-    cum_cols = g_cols + ["n_ticks"]
+    g_cols = _g_cols(all_days)
+
+    # 全时段累计列 + 8 个时段累计列一并 cumsum
+    slot_extra = []
+    for label, _, _ in _INTRADAY_SLOTS:
+        safe = label.replace(":", "").replace("-", "_")
+        slot_extra += [f"ls_{safe}", f"n_ticks_{safe}"]
+
+    cum_cols = g_cols + ["n_ticks"] + slot_extra
     all_days[cum_cols] = all_days[cum_cols].cumsum()
     all_days["long_short"] = all_days[g_cols[-1]] - all_days["g1"]
 
-    keep = ["Date"] + g_cols + ["long_short", "n_ticks"]
+    keep = ["Date"] + g_cols + ["long_short", "n_ticks"] + slot_extra
     all_days[keep].to_csv(os.path.join(parquet_dir, "_cum_daily.csv"), index=False)
 
 

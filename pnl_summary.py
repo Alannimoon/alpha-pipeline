@@ -9,7 +9,8 @@ python pnl_summary.py
 ----
 pnl_single.csv  ：单因子各实验设置的多空 avg PnL（bps/tick）
 pnl_multi.csv   ：多因子各实验设置的多空 avg PnL（bps/tick）
-同时在终端打印两张汇总表。
+pnl_xgb.csv     ：XGBoost 各实验设置的多空 avg PnL（bps/tick）
+同时在终端打印三张汇总表。
 """
 
 import os
@@ -21,15 +22,19 @@ import config
 
 # ── 工具 ───────────────────────────────────────────────────────────────────────
 
-def _avg_pnl(cum_daily: pd.DataFrame, ls_col: str = "long_short") -> float:
+def _avg_pnl(cum_daily: pd.DataFrame,
+             ls_col: str = "long_short",
+             n_col:  str = "n_ticks") -> float:
     """
-    从 _cum_daily.csv 的最后一行读取总累计多空收益和总 tick 数，
+    从 _cum_daily.csv 的最后一行读取累计多空收益和 tick 数，
     返回每 tick 平均 PnL（单位：bps）。
+
+    ls_col / n_col 可指定时段列，如 "ls_0930_1000" / "n_ticks_0930_1000"。
     """
-    if cum_daily.empty or ls_col not in cum_daily.columns or "n_ticks" not in cum_daily.columns:
+    if cum_daily.empty or ls_col not in cum_daily.columns or n_col not in cum_daily.columns:
         return float("nan")
     last = cum_daily.iloc[-1]
-    n    = last["n_ticks"]
+    n    = last[n_col]
     ls   = last[ls_col]
     if pd.isna(n) or pd.isna(ls) or n == 0:
         return float("nan")
@@ -116,16 +121,73 @@ def collect_multi(mfq_root: str) -> pd.DataFrame:
                         continue
                     df = pd.read_csv(csv, dtype={"Date": str})
                     df = df.sort_values("Date").reset_index(drop=True)
-                    rows.append({
-                        "n_groups":    n_groups,
-                        "factor_pool": pool,
+                    row = {
+                        "n_groups":     n_groups,
+                        "factor_pool":  pool,
                         "score_method": method,
                         "ret_horizon":  ret_h,
                         "avg_pnl_bps":  _avg_pnl(df),
-                    })
+                    }
+                    # 时段 PnL：自动检测 ls_* 列（对应 charts._build_cum_daily 生成的时段列）
+                    for lsc in [c for c in df.columns if c.startswith("ls_")]:
+                        safe = lsc[3:]                        # "ls_0930_1000" → "0930_1000"
+                        row[f"avg_pnl_{safe}"] = _avg_pnl(df, ls_col=lsc, n_col=f"n_ticks_{safe}")
+                    rows.append(row)
 
     return (pd.DataFrame(rows)
             .sort_values(["n_groups", "factor_pool", "score_method", "ret_horizon"])
+            .reset_index(drop=True))
+
+
+# ── XGBoost 分层 ───────────────────────────────────────────────────────────────
+
+def collect_xgb(xgb_root: str) -> pd.DataFrame:
+    """
+    遍历 xgb_quantile/{factor_pool}/g{n_groups}/ret{h}/_cum_daily.csv，
+    取最后一行计算 avg_pnl_bps。
+
+    列：factor_pool, n_groups, ret_horizon, avg_pnl_bps[, avg_pnl_{slot}...]
+    """
+    rows = []
+    if not os.path.isdir(xgb_root):
+        return pd.DataFrame(rows)
+
+    for pool in sorted(os.listdir(xgb_root)):         # all / union / intersection
+        pool_path = os.path.join(xgb_root, pool)
+        if not os.path.isdir(pool_path):
+            continue
+
+        for g_dir in sorted(os.listdir(pool_path)):   # g10 / g20
+            if not g_dir.startswith("g"):
+                continue
+            try:
+                n_groups = int(g_dir[1:])
+            except ValueError:
+                continue
+            g_path = os.path.join(pool_path, g_dir)
+            if not os.path.isdir(g_path):
+                continue
+
+            for ret_h in sorted(os.listdir(g_path)):  # ret100 / ret200 / ret300
+                rh_dir = os.path.join(g_path, ret_h)
+                csv    = os.path.join(rh_dir, "_cum_daily.csv")
+                if not os.path.exists(csv):
+                    continue
+                df = pd.read_csv(csv, dtype={"Date": str})
+                df = df.sort_values("Date").reset_index(drop=True)
+                row = {
+                    "factor_pool": pool,
+                    "n_groups":    n_groups,
+                    "ret_horizon": ret_h,
+                    "avg_pnl_bps": _avg_pnl(df),
+                }
+                for lsc in [c for c in df.columns if c.startswith("ls_")]:
+                    safe = lsc[3:]
+                    row[f"avg_pnl_{safe}"] = _avg_pnl(df, ls_col=lsc, n_col=f"n_ticks_{safe}")
+                rows.append(row)
+
+    return (pd.DataFrame(rows)
+            .sort_values(["factor_pool", "n_groups", "ret_horizon"])
             .reset_index(drop=True))
 
 
@@ -134,19 +196,25 @@ def collect_multi(mfq_root: str) -> pd.DataFrame:
 def main():
     cs_root  = os.path.join(config.EVAL_ROOT, "cs_quantile")
     mfq_root = os.path.join(config.EVAL_ROOT, "multi_factor_quantile")
+    xgb_root = os.path.join(config.EVAL_ROOT, "xgb_quantile")
 
     print("正在扫描单因子结果...")
     single = collect_single(cs_root)
     print("正在扫描多因子结果...")
     multi  = collect_multi(mfq_root)
+    print("正在扫描 XGBoost 结果...")
+    xgb    = collect_xgb(xgb_root)
 
     # ── 保存 CSV ──────────────────────────────────────────────────────────────
     out_single = os.path.join(config.ROOT, "pnl_single.csv")
     out_multi  = os.path.join(config.ROOT, "pnl_multi.csv")
+    out_xgb    = os.path.join(config.ROOT, "pnl_xgb.csv")
     single.to_csv(out_single, index=False)
     multi.to_csv(out_multi,  index=False)
+    xgb.to_csv(out_xgb,     index=False)
     print(f"\n已保存：{out_single}")
     print(f"已保存：{out_multi}")
+    print(f"已保存：{out_xgb}")
 
     # ── 打印单因子汇总（pivot：行=factor_col，列=ret_horizon）─────────────────
     if not single.empty:
@@ -191,6 +259,54 @@ def main():
         print(pivot_m.to_string())
     else:
         print("\n未找到多因子结果（multi_factor_quantile 目录为空或尚未运行）。")
+
+    # ── 多因子时段 PnL（每个 ret_horizon 单独一张表）────────────────────────
+    if not multi.empty:
+        slot_cols = sorted([c for c in multi.columns if c.startswith("avg_pnl_") and c != "avg_pnl_bps"])
+        if slot_cols:
+            multi["experiment"] = (
+                "g" + multi["n_groups"].astype(str)
+                + " | " + multi["factor_pool"]
+                + " | " + multi["score_method"]
+            )
+            for rh in ["ret100", "ret200", "ret300"]:
+                sub = multi[multi["ret_horizon"] == rh]
+                if sub.empty:
+                    continue
+                print(f"\n=== 多因子时段 PnL（bps/tick，{rh}）===")
+                disp = (
+                    sub[["experiment"] + slot_cols]
+                    .set_index("experiment")
+                    .rename(columns=lambda c: c.replace("avg_pnl_", ""))
+                    .round(4)
+                )
+                pd.set_option("display.max_rows", 200)
+                pd.set_option("display.width", 200)
+                print(disp.to_string())
+
+    # ── XGBoost 汇总 ─────────────────────────────────────────────────────────
+    if not xgb.empty:
+        print("\n=== XGBoost 多空平均 PnL（bps/tick）===")
+        xgb["experiment"] = (
+            xgb["factor_pool"]
+            + " | g" + xgb["n_groups"].astype(str)
+        )
+        pivot_x = (
+            xgb.pivot_table(
+                index="experiment",
+                columns="ret_horizon",
+                values="avg_pnl_bps",
+                aggfunc="first",
+            )
+            .round(4)
+        )
+        col_order = [c for c in ["ret100", "ret200", "ret300"] if c in pivot_x.columns]
+        pivot_x = pivot_x[col_order]
+        pd.set_option("display.max_rows", 200)
+        pd.set_option("display.width", 160)
+        print(pivot_x.to_string())
+    else:
+        print("\n未找到 XGBoost 结果（xgb_quantile 目录为空或尚未运行）。")
 
 
 if __name__ == "__main__":
