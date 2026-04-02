@@ -113,6 +113,8 @@ def main():
                         help="强制重新训练（跳过已存在检查）")
     p_xgbt.add_argument("--verbose-eval", type=int, default=20,
                         help="每多少轮打印一次训练日志（默认 20）")
+    p_xgbt.add_argument("--data-workers", type=int, default=8,
+                        help="数据加载并行进程数（默认 8，仅影响训练集/验证集构建速度）")
 
     # ── xgb_predict ────────────────────────────────────────────────────────────
     p_xgbp = sub.add_parser("xgb_predict", help="XGBoost 截面分层推理 + 生成汇总图表")
@@ -224,6 +226,7 @@ def main():
             },
             verbose_eval=args.verbose_eval,
             force=args.force,
+            data_workers=args.data_workers,
         )
     elif args.stage == "xgb_predict":
         _dates = [args.date] if args.date else None

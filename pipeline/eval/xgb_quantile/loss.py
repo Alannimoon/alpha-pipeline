@@ -109,7 +109,7 @@ def make_cost_obj(penalty_matrix: np.ndarray):
         # Hessian 近似：p_k · (1 − p_k)
         hess = np.maximum(probs * (1.0 - probs), 1e-6)      # (n, n_cls)
 
-        return grad.flatten(), hess.flatten()
+        return grad, hess  # (n, n_cls) — XGBoost 2.1+ 要求 (n_samples, n_classes)
 
     return cost_obj
 

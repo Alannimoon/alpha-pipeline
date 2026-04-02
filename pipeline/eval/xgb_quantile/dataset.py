@@ -11,9 +11,15 @@ import glob
 import os
 import random
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
 
 
 _VAL_MONTHS         = {"11", "12"}   # 11、12 月全部进验证集
@@ -25,6 +31,19 @@ _RET_HORIZONS = {
     "ret200": "ret_fwd_200",
     "ret300": "ret_fwd_300",
 }
+
+_WARN_LIMIT = 20
+_WARN_COUNTERS: dict[str, int] = defaultdict(int)
+
+
+def _warn(key: str, message: str) -> None:
+    """限制重复 warning 数量，避免刷屏。"""
+    _WARN_COUNTERS[key] += 1
+    count = _WARN_COUNTERS[key]
+    if count <= _WARN_LIMIT:
+        print(f"[WARN] {message}")
+    elif count == _WARN_LIMIT + 1:
+        print(f"[WARN] {key} 后续相同告警已省略 ...")
 
 
 # ── 日期划分 ───────────────────────────────────────────────────────────────────
@@ -85,8 +104,12 @@ def _scan_all_factor_cols(factor_root: str) -> dict[str, str]:
             for c in cols:
                 if c not in skip:
                     fc_to_fn[c] = factor_name
-        except Exception:
-            pass
+        except Exception as e:
+            _warn(
+                "scan_factor_cols",
+                f"扫描因子列失败: factor={factor_name}, file={files[0]} | "
+                f"{type(e).__name__}: {e}",
+            )
     return fc_to_fn
 
 
@@ -141,6 +164,11 @@ def _assign_labels(
     - qcut 成功但 n_bins < n_groups   → 线性重映射到 [0, n_groups-1]
     - n_bins < max(2, n_groups//2)    → 该截面丢弃（label=NaN）
     - qcut 失败                        → label=NaN
+
+    说明
+    ----
+    显式遍历各个 SampleTime 分组，避免 pandas groupby.apply 在未来版本中的
+    include_groups 行为变化导致 FutureWarning。
     """
     def _qcut_group(grp: pd.DataFrame) -> pd.DataFrame:
         try:
@@ -170,7 +198,16 @@ def _assign_labels(
             grp["label"] = raw.map(remap).astype(float)
         return grp
 
-    return df.groupby("SampleTime", group_keys=False).apply(_qcut_group)
+    parts: list[pd.DataFrame] = []
+    for _, grp in df.groupby("SampleTime", sort=False):
+        parts.append(_qcut_group(grp))
+
+    if not parts:
+        out = df.copy()
+        out["label"] = np.nan
+        return out
+
+    return pd.concat(parts, ignore_index=False)
 
 
 # ── 单日加载 ───────────────────────────────────────────────────────────────────
@@ -213,10 +250,15 @@ def load_day_data(
         try:
             df = pd.read_parquet(path, columns=["SampleTime", "SecurityID"] + cols)
             factor_dfs.append(df)
-        except Exception:
-            pass
+        except Exception as e:
+            _warn(
+                "read_factor_parquet",
+                f"读取因子文件失败: day={day}, factor={fn}, file={path} | "
+                f"{type(e).__name__}: {e}",
+            )
 
     if not factor_dfs:
+        _warn("empty_factor_dfs", f"day={day} 未读到任何因子文件")
         return None
 
     # ── 2. 合并各因子长表 ────────────────────────────────────────────────────
@@ -231,38 +273,57 @@ def load_day_data(
         merged = merged[merged["SampleTime"].isin(kept)]
 
     if merged.empty:
+        _warn("empty_after_factor_merge", f"day={day} 因子合并后为空")
         return None
 
     # ── 4. 加载 base 收益率 ──────────────────────────────────────────────────
     base_path = os.path.join(base_root, f"{day}.parquet")
     if not os.path.exists(base_path):
+        _warn("missing_base_file", f"day={day} base 文件不存在: {base_path}")
         return None
     try:
         base_df = pd.read_parquet(base_path, columns=["SampleTime", "SecurityID", ret_col])
-    except Exception:
+    except Exception as e:
+        _warn(
+            "read_base_parquet",
+            f"读取 base 文件失败: day={day}, file={base_path} | {type(e).__name__}: {e}",
+        )
         return None
 
     merged = merged.merge(base_df, on=["SampleTime", "SecurityID"], how="inner")
     merged = merged.dropna(subset=[ret_col])
     if merged.empty:
+        _warn("empty_after_ret_merge", f"day={day} 与 {ret_col} 合并后为空")
         return None
 
     # ── 5. 截面标注 ─────────────────────────────────────────────────────────
     merged = _assign_labels(merged, ret_col, n_groups)
     merged = merged.dropna(subset=["label"])
+    if merged.empty:
+        _warn("empty_after_label", f"day={day} 截面标注后全部被丢弃")
+        return None
     merged["label"] = merged["label"].astype(np.int32)
     merged.insert(0, "Date", day)
 
     # ── 6. 丢弃特征全空的行 ──────────────────────────────────────────────────
     fc_present = [c for c in fc_to_fn if c in merged.columns]
     if not fc_present:
+        _warn("no_feature_cols_present", f"day={day} 合并结果中不存在任何特征列")
         return None
     merged = merged[merged[fc_present].notna().any(axis=1)]
     if merged.empty:
+        _warn("empty_after_drop_all_nan_features", f"day={day} 去掉全空特征行后为空")
         return None
 
     keep = ["Date", "SampleTime", "SecurityID"] + fc_present + [ret_col, "label"]
     return merged[keep].reset_index(drop=True)
+
+
+# ── 并行辅助（顶层函数，可被子进程 pickle）─────────────────────────────────────
+
+def _load_day_args(args: tuple) -> "pd.DataFrame | None":
+    """ProcessPoolExecutor.map 的包装：将 tuple 解包后调用 load_day_data。"""
+    return load_day_data(*args)
 
 
 # ── 批量构建 ───────────────────────────────────────────────────────────────────
@@ -276,22 +337,44 @@ def build_dataset(
     n_groups: int = 10,
     stride: int | None = 100,
     verbose: bool = True,
+    desc: str | None = None,
+    n_workers: int = 1,
 ) -> pd.DataFrame:
     """
     批量加载多日数据，返回完整特征-标注 DataFrame。
 
     stride=100  → 每天约 47 个截面（非重叠 5 分钟窗口），约 5-6M 行
     stride=None → 全量 4740 截面（推理时使用）
+
+    n_workers > 1 时使用 ProcessPoolExecutor 并行加载各天数据，
+    I/O 密集场景下可显著提速（建议 4-16，视磁盘带宽而定）。
     """
     parts: list[pd.DataFrame] = []
-    for day in dates:
-        df = load_day_data(
-            factor_root, base_root, fc_to_fn, day, ret_col, n_groups, stride
-        )
-        if df is not None:
-            parts.append(df)
-            if verbose:
-                print(f"  {day}: {len(df):,} 行")
+
+    if n_workers > 1:
+        args_list = [
+            (factor_root, base_root, fc_to_fn, day, ret_col, n_groups, stride)
+            for day in dates
+        ]
+        if verbose:
+            print(f"  [{desc or ret_col}] 并行加载 {len(dates)} 天 (n_workers={n_workers})")
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            for df in executor.map(_load_day_args, args_list):
+                if df is not None:
+                    parts.append(df)
+    else:
+        iterable = dates
+        if verbose and tqdm is not None:
+            iterable = tqdm(dates, desc=desc or f"build[{ret_col}]", dynamic_ncols=True, leave=False)
+        for day in iterable:
+            df = load_day_data(
+                factor_root, base_root, fc_to_fn, day, ret_col, n_groups, stride
+            )
+            if df is not None:
+                parts.append(df)
+                if verbose and tqdm is None:
+                    print(f"  {day}: {len(df):,} 行")
+
     if not parts:
         return pd.DataFrame()
     return pd.concat(parts, ignore_index=True)
