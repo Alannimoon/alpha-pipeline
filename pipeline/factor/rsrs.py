@@ -20,10 +20,6 @@ RSRS —— 阻力支撑相对强度因子（Resistance Support Relative Strengt
 ----------
   window_ok：过去 W×20 个 tick 中 CanUseFiveLevelBook=False 的比例 < 10%
 
-附加输出
---------
-  has_limit(t)：过去 W×20 个 tick 内是否出现过涨跌停（实际恒为 False）
-
 窗口
 ----
   [30, 45, 60, 75, 105] 分钟
@@ -47,7 +43,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
-    列名：rsrs_30m, rsrs_30m_has_limit, rsrs_45m, ...
+    列名：rsrs_30m, rsrs_45m, rsrs_60m, rsrs_75m, rsrs_105m
     """
     can_use_l5 = df["CanUseFiveLevelBook"].to_numpy(bool)
 

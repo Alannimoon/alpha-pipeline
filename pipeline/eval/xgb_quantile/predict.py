@@ -28,6 +28,7 @@ XGBoost 截面分层 — 推理模块。
   然后自行应用 softmax，保证与训练时 cost_obj 的数值一致。
 """
 
+import json
 import os
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -115,6 +116,14 @@ def _predict_day(
         print(f"[WARN][predict][{day}] 合并收益后为空")
         return day
 
+    missing_feats = [c for c in feature_cols if c not in merged.columns]
+    if missing_feats:
+        print(
+            f"[ERROR][predict][{day}] 特征列缺失 {len(missing_feats)} 个: "
+            f"{missing_feats[:5]}{'...' if len(missing_feats) > 5 else ''}，跳过本日"
+        )
+        return day
+
     X = merged.reindex(columns=feature_cols).astype(np.float32).values
     dmat = xgb.DMatrix(X, feature_names=feature_cols, missing=np.nan)
 
@@ -189,13 +198,34 @@ def run_xgb_predict(
     max_workers: int | None = None,
     union_path: str | None = None,
     intersection_path: str | None = None,
+    val_only: bool = False,
 ) -> None:
+    """
+    val_only=True 时只推理验证集日期（从 xgb_quantile/date_split.json 读取），
+    结果写入 eval_root/xgb_quantile_val/ 而非 xgb_quantile/，两者互不干扰。
+    模型始终从 xgb_quantile/ 加载。
+    """
     from pipeline.eval.quantile.multi.charts import run_post_compute
 
     factor_pools = factor_pools or ["all", "union", "intersection"]
     n_groups_list = n_groups_list or [10, 20]
     ret_horizons = ret_horizons or list(_RET_HORIZONS.keys())
-    xgb_root = os.path.join(eval_root, "xgb_quantile")
+
+    # 模型固定在 xgb_quantile/，输出目录根据 val_only 切换
+    model_root = os.path.join(eval_root, "xgb_quantile")
+    out_root = os.path.join(eval_root, "xgb_quantile_val" if val_only else "xgb_quantile")
+
+    # val_only 时读取训练时保存的验证集日期列表
+    val_date_set: set[str] | None = None
+    if val_only:
+        split_path = os.path.join(model_root, "date_split.json")
+        if not os.path.exists(split_path):
+            print(f"[xgb_predict] val_only=True 但未找到 date_split.json: {split_path}")
+            return
+        with open(split_path) as f:
+            split_info = json.load(f)
+        val_date_set = set(split_info.get("val", []))
+        print(f"[xgb_predict] val_only=True，共 {len(val_date_set)} 个验证日期，输出至 {out_root}")
 
     for factor_pool in factor_pools:
         fc_to_fn = get_factor_cols_for_pool(
@@ -222,34 +252,38 @@ def run_xgb_predict(
                    and len(os.path.splitext(fname)[0]) == 8
             )
 
+        # val_only 时过滤到验证集日期
+        if val_date_set is not None:
+            _dates = [d for d in _dates if d in val_date_set]
+
         for n_groups in n_groups_list:
-            pool_dir = os.path.join(xgb_root, factor_pool, f"g{n_groups}")
             out_dirs: dict[str, str] = {}
 
             for ret_h in ret_horizons:
                 ret_col = _RET_HORIZONS[ret_h]
-                ret_dir = os.path.join(pool_dir, ret_h)
-                model_path = os.path.join(ret_dir, "model.ubj")
+                model_dir = os.path.join(model_root, factor_pool, f"g{n_groups}", ret_h)
+                out_dir = os.path.join(out_root, factor_pool, f"g{n_groups}", ret_h)
+                model_path = os.path.join(model_dir, "model.ubj")
 
                 if not os.path.exists(model_path):
                     print(f"[xgb_predict] 模型不存在，跳过：{model_path}")
                     continue
 
-                feat_file = os.path.join(ret_dir, "feature_names.txt")
+                feat_file = os.path.join(model_dir, "feature_names.txt")
                 if not os.path.exists(feat_file):
-                    print(f"[xgb_predict] feature_names.txt 不存在：{ret_dir}")
+                    print(f"[xgb_predict] feature_names.txt 不存在：{model_dir}")
                     continue
                 with open(feat_file) as f:
                     feature_cols = [line.strip() for line in f if line.strip()]
 
-                out_dirs[ret_h] = ret_dir
+                out_dirs[ret_h] = out_dir
 
                 # 过滤掉已完成的天
                 day_tasks = [
                     (factor_root, base_root, fc_to_fn, feature_cols,
-                     day, n_groups, ret_col, ret_dir)
+                     day, n_groups, ret_col, out_dir)
                     for day in _dates
-                    if not os.path.exists(os.path.join(ret_dir, f"{day}.parquet"))
+                    if not os.path.exists(os.path.join(out_dir, f"{day}.parquet"))
                 ]
                 already_done = len(_dates) - len(day_tasks)
                 print(

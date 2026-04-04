@@ -22,10 +22,6 @@ PvCorr —— 价量相关性因子（Price-Volume Correlation）。
   window_ok：过去 4×w 个 tick 中 CanUsePrice=False 的比例 < 10%
   （涵盖完整数据链：1w 算原始收益 + 2w 做标准化 + 1w 做平滑）
 
-附加输出
---------
-  has_limit(t)：过去 4×w 个 tick 内是否出现过涨跌停
-
 窗口
 ----
   [100, 200, 300] ticks
@@ -46,7 +42,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
-    列名：pv_corr_100t, pv_corr_100t_has_limit, pv_corr_200t, ...
+    列名：pv_corr_100t, pv_corr_200t, pv_corr_300t
     """
     can_use = df["CanUsePrice"].to_numpy(bool)
     price   = df["Price"].to_numpy(np.float64)

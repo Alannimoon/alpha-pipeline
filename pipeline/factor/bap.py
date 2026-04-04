@@ -15,13 +15,6 @@ BAP —— 买卖盘压力因子（Bid-Ask Pressure）。
   （BAP_raw 非 NaN 当且仅当 CanUseDoubleSideBook=True 且分母 > 0，
    故直接用 BAP_raw 的有效占比即可，无需单独看 CanUseDoubleSideBook）
 
-附加输出
---------
-  bap_{W}m_has_limit(t)：过去 W 个 tick 内是否存在涨跌停 tick
-    （IsLimitTick = CanUsePrice=True & CanUseDoubleSideBook=False）
-    对 BAP 而言 has_limit 恒为 False（涨跌停 tick 的 BAP_raw 本身就是 NaN，
-    不会参与均值计算），保留此列仅为与其他因子输出格式对齐。
-
 窗口
 ----
   [15, 30, 45, 60, 75] 分钟，即 [300, 600, 900, 1200, 1500] tick
@@ -46,7 +39,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
-    列名：bap_15m, bap_15m_has_limit, bap_30m, bap_30m_has_limit, ...
+    列名：bap_15m, bap_30m, bap_45m, bap_60m, bap_75m
     """
     can_use_l1 = df["CanUseDoubleSideBook"].to_numpy(bool)
 

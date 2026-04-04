@@ -156,58 +156,29 @@ def _assign_labels(
     n_groups: int,
 ) -> pd.DataFrame:
     """
-    对每个 SampleTime 截面按 ret_col 做等量 qcut，生成 label（0..n_groups-1）。
+    对每个 SampleTime 截面按 ret_col 做等量分组，生成 label（0..n_groups-1）。
 
-    处理策略
-    --------
-    - qcut 成功且 n_bins == n_groups  → 直接使用
-    - qcut 成功但 n_bins < n_groups   → 线性重映射到 [0, n_groups-1]
-    - n_bins < max(2, n_groups//2)    → 该截面丢弃（label=NaN）
-    - qcut 失败                        → label=NaN
-
-    说明
-    ----
-    显式遍历各个 SampleTime 分组，避免 pandas groupby.apply 在未来版本中的
-    include_groups 行为变化导致 FutureWarning。
+    使用 groupby rank 向量化实现，替代逐截面 pd.qcut 循环：
+    - rank(method='first') 保证连续型收益不出现 tie 导致 bin 减少的问题
+    - 等量分组公式：label = (rank - 1) * n_groups // valid_count
+    - 有效截面要求：非 NaN 观测数 >= max(2, n_groups // 2)
     """
-    def _qcut_group(grp: pd.DataFrame) -> pd.DataFrame:
-        try:
-            raw = pd.qcut(grp[ret_col], q=n_groups, labels=False, duplicates="drop")
-        except Exception:
-            grp = grp.copy()
-            grp["label"] = np.nan
-            return grp
+    df = df.copy()
 
-        n_bins = int(raw.nunique())
-        if n_bins < max(2, n_groups // 2):
-            grp = grp.copy()
-            grp["label"] = np.nan
-            return grp
+    has_ret = df[ret_col].notna()
 
-        grp = grp.copy()
-        if n_bins == n_groups:
-            grp["label"] = raw.astype(float)
-        else:
-            # 线性重映射：将实际 bin 均匀拉伸到 [0, n_groups-1]
-            uniq = sorted(raw.dropna().unique())
-            denom = max(len(uniq) - 1, 1)
-            remap = {
-                v: int(round(i * (n_groups - 1) / denom))
-                for i, v in enumerate(uniq)
-            }
-            grp["label"] = raw.map(remap).astype(float)
-        return grp
+    # 每个截面的有效观测数
+    valid_count = df.groupby("SampleTime")[ret_col].transform("count")
+    min_count = max(2, n_groups // 2)
 
-    parts: list[pd.DataFrame] = []
-    for _, grp in df.groupby("SampleTime", sort=False):
-        parts.append(_qcut_group(grp))
+    # 截面内排名（1-based），ties 按出现顺序打破
+    rank = df.groupby("SampleTime")[ret_col].rank(method="first", na_option="keep")
 
-    if not parts:
-        out = df.copy()
-        out["label"] = np.nan
-        return out
+    # 等量分组：[0, n_groups-1]
+    labels = ((rank - 1) * n_groups // valid_count).clip(0, n_groups - 1)
 
-    return pd.concat(parts, ignore_index=False)
+    df["label"] = labels.where(has_ret & (valid_count >= min_count))
+    return df
 
 
 # ── 单日加载 ───────────────────────────────────────────────────────────────────

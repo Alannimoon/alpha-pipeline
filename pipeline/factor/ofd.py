@@ -23,10 +23,6 @@ OFD —— 委托密度比率因子（Order Flow Density）。
   过去 W×20 个 tick 中 OFD_raw 非 NaN 的比例 < 90% → 因子记 NaN
   avg_bid/ask_spread ≤ 0 时 OFD_raw = NaN（挂单价格异常或全为同价位）
 
-附加输出
---------
-  has_limit(t)：过去 W×20 个 tick 内是否出现过涨跌停（实际恒为 False）
-
 窗口
 ----
   [15, 30, 45, 60, 75] 分钟
@@ -50,7 +46,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
-    列名：ofd_15m, ofd_15m_has_limit, ofd_30m, ...
+    列名：ofd_15m, ofd_30m, ofd_45m, ofd_60m, ofd_75m
     """
     can_use_l5 = df["CanUseFiveLevelBook"].to_numpy(bool)
 

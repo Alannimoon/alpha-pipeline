@@ -16,10 +16,6 @@ NegSkew —— 负偏度因子（Negative Skewness）。
   window_ok：过去 W×20+20 个 tick 中 CanUsePrice=False 的比例 < 10%
   （多出的 20 覆盖 r_1m 的 lag）
 
-附加输出
---------
-  has_limit(t)：过去 W×20+20 个 tick 内是否出现过涨跌停
-
 窗口
 ----
   [15, 30, 45, 60] 分钟
@@ -40,7 +36,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
-    列名：neg_skew_15m, neg_skew_15m_has_limit, neg_skew_30m, ...
+    列名：neg_skew_15m, neg_skew_30m, neg_skew_45m, neg_skew_60m
     """
     can_use = df["CanUsePrice"].to_numpy(bool)
     price   = df["Price"].to_numpy(np.float64)

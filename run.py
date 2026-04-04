@@ -127,6 +127,8 @@ def main():
                         choices=["ret100", "ret200", "ret300"],
                         help="收益率窗口（可多选，默认全部三种）")
     p_xgbp.add_argument("--date", default=None, help="只推理指定日期，如 20250102")
+    p_xgbp.add_argument("--val-only", action="store_true", default=False,
+                        help="只推理验证集日期（读取 xgb_quantile/date_split.json），结果写入 xgb_quantile_val/")
     p_xgbp.add_argument("--workers", type=int, default=None, help="并行进程数")
 
     args = parser.parse_args()
@@ -241,6 +243,7 @@ def main():
             max_workers=args.workers,
             union_path=config.FACTOR_POOL_UNION_TXT,
             intersection_path=config.FACTOR_POOL_INTERSECTION_TXT,
+            val_only=args.val_only,
         )
     else:
         parser.print_help()

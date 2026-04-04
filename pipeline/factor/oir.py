@@ -17,10 +17,6 @@ OIR —— 加权委托失衡率（Order Imbalance Ratio，五档衰减权重版
 ----------
   过去 W×20 个 tick 中 OIR_raw 非 NaN 的比例 < 90% → 因子记 NaN
 
-附加输出
---------
-  has_limit(t)：过去 W×20 个 tick 内是否出现过涨跌停（实际恒为 False）
-
 窗口
 ----
   [15, 30, 45, 60, 75] 分钟
@@ -45,7 +41,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
-    列名：oir_15m, oir_15m_has_limit, oir_30m, ...
+    列名：oir_15m, oir_30m, oir_45m, oir_60m, oir_75m
     """
     can_use_l5 = df["CanUseFiveLevelBook"].to_numpy(bool)
 

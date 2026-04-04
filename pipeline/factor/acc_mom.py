@@ -12,11 +12,6 @@ AccMom —— 加速度动量因子（Acceleration Momentum）。
     CanUsePrice(t) & CanUsePrice(t-short) & CanUsePrice(t-long)
   否则为 NaN。
 
-附加输出
---------
-  has_limit(t)：三个 anchor tick 中是否有涨跌停
-    limit(t) | limit(t-short) | limit(t-long)，仅当 valid 时有意义。
-
 窗口（short_tick, long_tick）对
 --------------------------------
   (25,50), (50,100), (100,200), (150,300), (200,400),
@@ -37,7 +32,7 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     输入：单只股票单日的完整 DataFrame（由 _core.load_data 加载）
     输出：只含因子列的 DataFrame，index 与输入对齐
 
-    列名：acc_mom_25_50t, acc_mom_25_50t_has_limit, acc_mom_50_100t, ...
+    列名：acc_mom_25_50t, acc_mom_50_100t, acc_mom_100_200t, ...
     """
     can_use = df["CanUsePrice"].to_numpy(bool)
     log_p   = np.where(can_use, np.log(df["Price"].to_numpy(np.float64)), np.nan)
