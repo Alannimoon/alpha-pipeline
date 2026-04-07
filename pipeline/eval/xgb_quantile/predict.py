@@ -36,7 +36,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
 
-from .dataset import _RET_HORIZONS, get_factor_cols_for_pool
+from .dataset import _RET_HORIZONS, SLOT_RANGES, get_factor_cols_for_pool
 
 try:
     import xgboost as xgb
@@ -72,6 +72,7 @@ def _predict_day(
     n_groups: int,
     ret_col: str,
     out_dir: str,
+    time_range: tuple[str, str] | None = None,
 ) -> str:
     out_path = os.path.join(out_dir, f"{day}.parquet")
     if os.path.exists(out_path):
@@ -115,6 +116,13 @@ def _predict_day(
     if merged.empty:
         print(f"[WARN][predict][{day}] 合并收益后为空")
         return day
+
+    # ── 时段过滤（分时段模型只推理对应时段的截面）──────────────────────────
+    if time_range is not None:
+        t_start, t_end = time_range
+        merged = merged[(merged["SampleTime"] >= t_start) & (merged["SampleTime"] < t_end)]
+        if merged.empty:
+            return day
 
     missing_feats = [c for c in feature_cols if c not in merged.columns]
     if missing_feats:
@@ -199,11 +207,17 @@ def run_xgb_predict(
     union_path: str | None = None,
     intersection_path: str | None = None,
     val_only: bool = False,
+    slot: str | None = None,
 ) -> None:
     """
-    val_only=True 时只推理验证集日期（从 xgb_quantile/date_split.json 读取），
-    结果写入 eval_root/xgb_quantile_val/ 而非 xgb_quantile/，两者互不干扰。
-    模型始终从 xgb_quantile/ 加载。
+    val_only=True 时只推理验证集日期，结果写入独立目录，两者互不干扰。
+    slot 指定时，从 xgb_quantile_slot/{slot}/ 加载分时段模型，只推理该时段截面。
+
+    目录路由规则：
+      slot=None,  val_only=False → xgb_quantile/
+      slot=None,  val_only=True  → xgb_quantile_val/
+      slot=<s>,   val_only=False → xgb_quantile_slot/{s}/
+      slot=<s>,   val_only=True  → xgb_quantile_slot_val/{s}/
     """
     from pipeline.eval.quantile.multi.charts import run_post_compute
 
@@ -211,9 +225,23 @@ def run_xgb_predict(
     n_groups_list = n_groups_list or [10, 20]
     ret_horizons = ret_horizons or list(_RET_HORIZONS.keys())
 
-    # 模型固定在 xgb_quantile/，输出目录根据 val_only 切换
-    model_root = os.path.join(eval_root, "xgb_quantile")
-    out_root = os.path.join(eval_root, "xgb_quantile_val" if val_only else "xgb_quantile")
+    # ── 时段路由 ─────────────────────────────────────────────────────────────────
+    if slot is not None:
+        if slot not in SLOT_RANGES:
+            raise ValueError(f"未知时段 slot={slot!r}，可选：{sorted(SLOT_RANGES)}")
+        t_start, t_end, _ = SLOT_RANGES[slot]   # 第三元素 stride 仅训练时用
+        time_range: tuple[str, str] | None = (t_start, t_end)
+        model_root = os.path.join(eval_root, "xgb_quantile_slot", slot)
+        out_root = os.path.join(
+            eval_root,
+            "xgb_quantile_slot_val" if val_only else "xgb_quantile_slot",
+            slot,
+        )
+        print(f"[xgb_predict] 分时段模式 slot={slot}，时间范围 {t_start}–{t_end}")
+    else:
+        time_range = None
+        model_root = os.path.join(eval_root, "xgb_quantile")
+        out_root = os.path.join(eval_root, "xgb_quantile_val" if val_only else "xgb_quantile")
 
     # val_only 时读取训练时保存的验证集日期列表
     val_date_set: set[str] | None = None
@@ -281,7 +309,7 @@ def run_xgb_predict(
                 # 过滤掉已完成的天
                 day_tasks = [
                     (factor_root, base_root, fc_to_fn, feature_cols,
-                     day, n_groups, ret_col, out_dir)
+                     day, n_groups, ret_col, out_dir, time_range)
                     for day in _dates
                     if not os.path.exists(os.path.join(out_dir, f"{day}.parquet"))
                 ]
@@ -327,5 +355,5 @@ def run_xgb_predict(
 
             if out_dirs:
                 print(f"[xgb_predict] pool={factor_pool} g={n_groups}: stage=post_compute")
-                run_post_compute(out_dirs)
+                run_post_compute(out_dirs, skip_slot_charts=(slot is not None))
                 print(f"[xgb_predict] 完成：pool={factor_pool} g={n_groups}")

@@ -335,12 +335,20 @@ def _build_intraday_slot_charts(parquet_dir: str) -> None:
 
 # ── 批量入口 ───────────────────────────────────────────────────────────────────
 
-def run_post_compute(out_dirs: dict[str, str]) -> None:
-    """多因子计算完成后，对各 ret_horizon 目录生成汇总与图表。"""
+def run_post_compute(
+    out_dirs: dict[str, str],
+    skip_slot_charts: bool = False,
+) -> None:
+    """多因子计算完成后，对各 ret_horizon 目录生成汇总与图表。
+
+    skip_slot_charts=True 时跳过 8 张时段分图，用于分时段模型（parquet
+    里只有单一时段的行，生成其余 7 张时段图没有意义）。
+    """
     for ret_h, sub_dir in out_dirs.items():
         _build_daily(sub_dir)
         _build_summary(sub_dir)
         _build_cum_daily(sub_dir)
         _build_cum_tick_chart(sub_dir)
-        _build_intraday_slot_charts(sub_dir)
+        if not skip_slot_charts:
+            _build_intraday_slot_charts(sub_dir)
         print(f"[{ret_h}] 汇总完成：{sub_dir}")

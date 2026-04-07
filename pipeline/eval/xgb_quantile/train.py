@@ -23,6 +23,7 @@ import numpy as np
 
 from .dataset import (
     _RET_HORIZONS,
+    SLOT_RANGES,
     build_dataset,
     get_factor_cols_for_pool,
     split_dates,
@@ -112,6 +113,7 @@ def _train_one(
     verbose_eval: int = 20,
     task_desc: str = "",
     data_workers: int = 1,
+    time_range: tuple[str, str] | None = None,
 ) -> None:
     """训练单个模型（一种 factor_pool × n_groups × ret_horizon 组合）。"""
     os.makedirs(out_dir, exist_ok=True)
@@ -135,6 +137,7 @@ def _train_one(
         verbose=True,
         desc=f"train_data[{task_desc}]",
         n_workers=data_workers,
+        time_range=time_range,
     )
     print(f"[{task_desc}] 训练集：{len(train_df):,} 样本")
 
@@ -150,6 +153,7 @@ def _train_one(
         verbose=True,
         desc=f"val_data[{task_desc}]",
         n_workers=data_workers,
+        time_range=time_range,
     )
     print(f"[{task_desc}] 验证集：{len(val_df):,} 样本")
 
@@ -232,7 +236,7 @@ def run_xgb_train(
     factor_pools: list[str] | None = None,
     n_groups_list: list[int] | None = None,
     ret_horizons: list[str] | None = None,
-    stride: int = 100,
+    stride: int | None = None,
     union_path: str | None = None,
     intersection_path: str | None = None,
     xgb_params: dict | None = None,
@@ -243,12 +247,28 @@ def run_xgb_train(
     verbose_eval: int = 20,
     force: bool = False,
     data_workers: int = 1,
+    slot: str | None = None,
 ) -> None:
     factor_pools = factor_pools or ["all", "union", "intersection"]
     n_groups_list = n_groups_list or [10, 20]
     ret_horizons = ret_horizons or list(_RET_HORIZONS.keys())
     penalty_kwargs = penalty_kwargs or {}
     params = {**_DEFAULT_XGB_PARAMS, **(xgb_params or {})}
+
+    # ── 时段路由 ─────────────────────────────────────────────────────────────────
+    if slot is not None:
+        if slot not in SLOT_RANGES:
+            raise ValueError(f"未知时段 slot={slot!r}，可选：{sorted(SLOT_RANGES)}")
+        t_start, t_end, default_stride = SLOT_RANGES[slot]
+        time_range = (t_start, t_end)
+        # 用户未显式指定 stride 时，使用时段推荐值（约每天 20 个截面）
+        stride = stride if stride is not None else default_stride
+        xgb_root = os.path.join(eval_root, "xgb_quantile_slot", slot)
+        print(f"[xgb_train] 分时段模式 slot={slot}，时间范围 {t_start}–{t_end}，stride={stride}")
+    else:
+        time_range = None
+        stride = stride if stride is not None else 100  # 全天默认 stride
+        xgb_root = os.path.join(eval_root, "xgb_quantile")
 
     if dates is None:
         any_fn = next(
@@ -270,7 +290,6 @@ def run_xgb_train(
     train_dates, val_dates = split_dates(dates)
     print(f"日期划分：训练集 {len(train_dates)} 天，验证集 {len(val_dates)} 天")
 
-    xgb_root = os.path.join(eval_root, "xgb_quantile")
     os.makedirs(xgb_root, exist_ok=True)
     with open(os.path.join(xgb_root, "date_split.json"), "w") as f:
         json.dump({"train": train_dates, "val": val_dates}, f, indent=2)
@@ -326,6 +345,7 @@ def run_xgb_train(
             verbose_eval,
             task_desc=task_desc,
             data_workers=data_workers,
+            time_range=time_range,
         )
 
     print("\n所有模型训练完成。")

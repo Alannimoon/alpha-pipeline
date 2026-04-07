@@ -191,30 +191,75 @@ def collect_xgb(xgb_root: str) -> pd.DataFrame:
             .reset_index(drop=True))
 
 
+# ── XGBoost 分时段 ─────────────────────────────────────────────────────────────
+
+def collect_xgb_slot(xgb_slot_root: str) -> pd.DataFrame:
+    """
+    遍历 xgb_quantile_slot/{slot}/{factor_pool}/g{n_groups}/ret{h}/_cum_daily.csv，
+    复用 collect_xgb 逐时段扫描后加 slot 列拼接。
+
+    列：slot, factor_pool, n_groups, ret_horizon, avg_pnl_bps[, avg_pnl_{slot_period}...]
+    """
+    parts = []
+    if not os.path.isdir(xgb_slot_root):
+        return pd.DataFrame()
+
+    for slot in sorted(os.listdir(xgb_slot_root)):
+        slot_path = os.path.join(xgb_slot_root, slot)
+        if not os.path.isdir(slot_path):
+            continue
+        df = collect_xgb(slot_path)
+        if not df.empty:
+            df.insert(0, "slot", slot)
+            parts.append(df)
+
+    if not parts:
+        return pd.DataFrame()
+    return pd.concat(parts, ignore_index=True)
+
+
 # ── 主入口 ─────────────────────────────────────────────────────────────────────
 
 def main():
-    cs_root  = os.path.join(config.EVAL_ROOT, "cs_quantile")
-    mfq_root = os.path.join(config.EVAL_ROOT, "multi_factor_quantile")
-    xgb_root = os.path.join(config.EVAL_ROOT, "xgb_quantile")
+    cs_root      = os.path.join(config.EVAL_ROOT, "cs_quantile")
+    mfq_root     = os.path.join(config.EVAL_ROOT, "multi_factor_quantile")
+    xgb_root     = os.path.join(config.EVAL_ROOT, "xgb_quantile")
+    xgb_val_root      = os.path.join(config.EVAL_ROOT, "xgb_quantile_val")
+    xgb_slot_root     = os.path.join(config.EVAL_ROOT, "xgb_quantile_slot")
+    xgb_slot_val_root = os.path.join(config.EVAL_ROOT, "xgb_quantile_slot_val")
 
     print("正在扫描单因子结果...")
-    single = collect_single(cs_root)
+    single        = collect_single(cs_root)
     print("正在扫描多因子结果...")
-    multi  = collect_multi(mfq_root)
-    print("正在扫描 XGBoost 结果...")
-    xgb    = collect_xgb(xgb_root)
+    multi         = collect_multi(mfq_root)
+    print("正在扫描 XGBoost 全量推理结果...")
+    xgb           = collect_xgb(xgb_root)
+    print("正在扫描 XGBoost 验证集推理结果...")
+    xgb_val       = collect_xgb(xgb_val_root)
+    print("正在扫描 XGBoost 分时段全量推理结果...")
+    xgb_slot      = collect_xgb_slot(xgb_slot_root)
+    print("正在扫描 XGBoost 分时段验证集推理结果...")
+    xgb_slot_val  = collect_xgb_slot(xgb_slot_val_root)
 
     # ── 保存 CSV ──────────────────────────────────────────────────────────────
-    out_single = os.path.join(config.ROOT, "pnl_single.csv")
-    out_multi  = os.path.join(config.ROOT, "pnl_multi.csv")
-    out_xgb    = os.path.join(config.ROOT, "pnl_xgb.csv")
-    single.to_csv(out_single, index=False)
-    multi.to_csv(out_multi,  index=False)
-    xgb.to_csv(out_xgb,     index=False)
+    out_single       = os.path.join(config.ROOT, "pnl_single.csv")
+    out_multi        = os.path.join(config.ROOT, "pnl_multi.csv")
+    out_xgb          = os.path.join(config.ROOT, "pnl_xgb.csv")
+    out_xgb_val      = os.path.join(config.ROOT, "pnl_xgb_val.csv")
+    out_xgb_slot     = os.path.join(config.ROOT, "pnl_xgb_slot.csv")
+    out_xgb_slot_val = os.path.join(config.ROOT, "pnl_xgb_slot_val.csv")
+    single.to_csv(out_single,           index=False)
+    multi.to_csv(out_multi,             index=False)
+    xgb.to_csv(out_xgb,                 index=False)
+    xgb_val.to_csv(out_xgb_val,         index=False)
+    xgb_slot.to_csv(out_xgb_slot,       index=False)
+    xgb_slot_val.to_csv(out_xgb_slot_val, index=False)
     print(f"\n已保存：{out_single}")
     print(f"已保存：{out_multi}")
     print(f"已保存：{out_xgb}")
+    print(f"已保存：{out_xgb_val}")
+    print(f"已保存：{out_xgb_slot}")
+    print(f"已保存：{out_xgb_slot_val}")
 
     # ── 打印单因子汇总（pivot：行=factor_col，列=ret_horizon）─────────────────
     if not single.empty:
@@ -307,6 +352,77 @@ def main():
         print(pivot_x.to_string())
     else:
         print("\n未找到 XGBoost 结果（xgb_quantile 目录为空或尚未运行）。")
+
+    # ── XGBoost 验证集汇总 ───────────────────────────────────────────────────────
+    if not xgb_val.empty:
+        print("\n=== XGBoost 验证集多空平均 PnL（bps/tick）===")
+        xgb_val["experiment"] = (
+            xgb_val["factor_pool"]
+            + " | g" + xgb_val["n_groups"].astype(str)
+        )
+        pivot_xv = (
+            xgb_val.pivot_table(
+                index="experiment",
+                columns="ret_horizon",
+                values="avg_pnl_bps",
+                aggfunc="first",
+            )
+            .round(4)
+        )
+        col_order = [c for c in ["ret100", "ret200", "ret300"] if c in pivot_xv.columns]
+        pivot_xv = pivot_xv[col_order]
+        pd.set_option("display.max_rows", 200)
+        pd.set_option("display.width", 160)
+        print(pivot_xv.to_string())
+
+        # 时段 PnL
+        slot_cols = sorted([c for c in xgb_val.columns if c.startswith("avg_pnl_") and c != "avg_pnl_bps"])
+        if slot_cols:
+            for rh in ["ret100", "ret200", "ret300"]:
+                sub = xgb_val[xgb_val["ret_horizon"] == rh]
+                if sub.empty:
+                    continue
+                print(f"\n=== XGBoost 验证集时段 PnL（bps/tick，{rh}）===")
+                disp = (
+                    sub[["experiment"] + slot_cols]
+                    .set_index("experiment")
+                    .rename(columns=lambda c: c.replace("avg_pnl_", ""))
+                    .round(4)
+                )
+                pd.set_option("display.width", 200)
+                print(disp.to_string())
+    else:
+        print("\n未找到 XGBoost 验证集结果（xgb_quantile_val 目录为空或尚未运行）。")
+
+    # ── XGBoost 分时段汇总（全量 + 验证集各一张表）──────────────────────────────
+    for label, df_slot in [
+        ("XGBoost 分时段全量推理", xgb_slot),
+        ("XGBoost 分时段验证集推理", xgb_slot_val),
+    ]:
+        if not df_slot.empty:
+            print(f"\n=== {label} 多空平均 PnL（bps/tick）===")
+            df_slot["experiment"] = (
+                df_slot["slot"]
+                + " | " + df_slot["factor_pool"]
+                + " | g" + df_slot["n_groups"].astype(str)
+            )
+            pivot_s = (
+                df_slot.pivot_table(
+                    index="experiment",
+                    columns="ret_horizon",
+                    values="avg_pnl_bps",
+                    aggfunc="first",
+                )
+                .round(4)
+            )
+            col_order = [c for c in ["ret100", "ret200", "ret300"] if c in pivot_s.columns]
+            pivot_s = pivot_s[col_order]
+            pd.set_option("display.max_rows", 200)
+            pd.set_option("display.width", 180)
+            print(pivot_s.to_string())
+        else:
+            dir_name = "xgb_quantile_slot" if "全量" in label else "xgb_quantile_slot_val"
+            print(f"\n未找到{label}结果（{dir_name} 目录为空或尚未运行）。")
 
 
 if __name__ == "__main__":

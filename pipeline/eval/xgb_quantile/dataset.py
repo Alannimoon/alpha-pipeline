@@ -32,6 +32,17 @@ _RET_HORIZONS = {
     "ret300": "ret_fwd_300",
 }
 
+# ── 时段定义 ───────────────────────────────────────────────────────────────────
+
+# (起始时间, 结束时间, 推荐stride)
+# 推荐 stride 以"每天约 20 个截面"为目标：slot_ticks / 20，取整
+SLOT_RANGES: dict[str, tuple[str, str, int]] = {
+    "open":      ("09:30:00", "10:00:00", 10),   # 200 ticks / 20 = 10
+    "morning":   ("10:00:00", "11:30:00", 90),   # 1800 ticks / 20 = 90
+    "afternoon": ("13:00:00", "14:00:00", 60),   # 1200 ticks / 20 = 60
+    "close":     ("14:00:00", "23:59:59", 57),   # 1140 ticks / 20 = 57
+}
+
 _WARN_LIMIT = 20
 _WARN_COUNTERS: dict[str, int] = defaultdict(int)
 
@@ -191,6 +202,7 @@ def load_day_data(
     ret_col: str,
     n_groups: int = 10,
     stride: int | None = None,
+    time_range: tuple[str, str] | None = None,
 ) -> pd.DataFrame | None:
     """
     读取单日数据，返回长格式 DataFrame：
@@ -236,6 +248,13 @@ def load_day_data(
     merged = factor_dfs[0]
     for df in factor_dfs[1:]:
         merged = merged.merge(df, on=["SampleTime", "SecurityID"], how="outer")
+
+    # ── 2b. 时段过滤（分时段训练时只保留该时段的截面）──────────────────────
+    if time_range is not None:
+        t_start, t_end = time_range
+        merged = merged[(merged["SampleTime"] >= t_start) & (merged["SampleTime"] < t_end)]
+        if merged.empty:
+            return None
 
     # ── 3. 时刻降采样（训练时减少数据量）────────────────────────────────────
     if stride is not None and stride > 1:
@@ -310,6 +329,7 @@ def build_dataset(
     verbose: bool = True,
     desc: str | None = None,
     n_workers: int = 1,
+    time_range: tuple[str, str] | None = None,
 ) -> pd.DataFrame:
     """
     批量加载多日数据，返回完整特征-标注 DataFrame。
@@ -324,7 +344,7 @@ def build_dataset(
 
     if n_workers > 1:
         args_list = [
-            (factor_root, base_root, fc_to_fn, day, ret_col, n_groups, stride)
+            (factor_root, base_root, fc_to_fn, day, ret_col, n_groups, stride, time_range)
             for day in dates
         ]
         if verbose:
@@ -339,7 +359,7 @@ def build_dataset(
             iterable = tqdm(dates, desc=desc or f"build[{ret_col}]", dynamic_ncols=True, leave=False)
         for day in iterable:
             df = load_day_data(
-                factor_root, base_root, fc_to_fn, day, ret_col, n_groups, stride
+                factor_root, base_root, fc_to_fn, day, ret_col, n_groups, stride, time_range
             )
             if df is not None:
                 parts.append(df)

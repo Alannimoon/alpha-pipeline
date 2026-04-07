@@ -97,7 +97,7 @@ def main():
     p_xgbt.add_argument("--ret-horizon", nargs="+", default=None,
                         choices=["ret100", "ret200", "ret300"],
                         help="收益率窗口（可多选，默认全部三种）")
-    p_xgbt.add_argument("--stride", type=int, default=100,
+    p_xgbt.add_argument("--stride", type=int, default=None,
                         help="训练集截面降采样间隔（默认 100，约每 5 分钟一截面）")
     p_xgbt.add_argument("--num-rounds", type=int, default=500,
                         help="最大 boosting 轮次（默认 500）")
@@ -113,6 +113,9 @@ def main():
                         help="强制重新训练（跳过已存在检查）")
     p_xgbt.add_argument("--verbose-eval", type=int, default=20,
                         help="每多少轮打印一次训练日志（默认 20）")
+    p_xgbt.add_argument("--slot", default=None,
+        choices=["open", "morning", "afternoon", "close"],
+        help="分时段训练：只用该时段的样本（open=09:30-10:00 / morning=10:00-11:30 / afternoon=13:00-14:00 / close=14:00-14:57）")
     p_xgbt.add_argument("--data-workers", type=int, default=8,
                         help="数据加载并行进程数（默认 8，仅影响训练集/验证集构建速度）")
 
@@ -127,6 +130,9 @@ def main():
                         choices=["ret100", "ret200", "ret300"],
                         help="收益率窗口（可多选，默认全部三种）")
     p_xgbp.add_argument("--date", default=None, help="只推理指定日期，如 20250102")
+    p_xgbp.add_argument("--slot", default=None,
+        choices=["open", "morning", "afternoon", "close"],
+        help="分时段推理：加载时段模型，只推理该时段截面（需先用 xgb_train --slot 训练）")
     p_xgbp.add_argument("--val-only", action="store_true", default=False,
                         help="只推理验证集日期（读取 xgb_quantile/date_split.json），结果写入 xgb_quantile_val/")
     p_xgbp.add_argument("--workers", type=int, default=None, help="并行进程数")
@@ -229,6 +235,7 @@ def main():
             verbose_eval=args.verbose_eval,
             force=args.force,
             data_workers=args.data_workers,
+            slot=args.slot,
         )
     elif args.stage == "xgb_predict":
         _dates = [args.date] if args.date else None
@@ -244,6 +251,7 @@ def main():
             union_path=config.FACTOR_POOL_UNION_TXT,
             intersection_path=config.FACTOR_POOL_INTERSECTION_TXT,
             val_only=args.val_only,
+            slot=args.slot,
         )
     else:
         parser.print_help()
