@@ -15,8 +15,8 @@ except Exception:
 _HERE = os.path.dirname(os.path.abspath(__file__))   # extract.py 所在目录（即项目根）
 
 DEFAULT_DATA_ROOT = "/home/fund/data"
-DEFAULT_A500_XLS  = os.path.join(_HERE, "..", "..", "config", "a500.xls")  # pipeline/ingest/ → ../../config/
-DEFAULT_OUTDIR    = os.path.join(_HERE, "..", "..", "data")
+DEFAULT_A500_XLS  = os.path.join(_HERE, "..", "config", "a500.xls")   # pipeline/ → ../config/
+DEFAULT_OUTDIR    = os.path.join(_HERE, "..", "data")
 DEFAULT_FORMAT    = "parquet"   # csv / parquet
 DEFAULT_CHUNKSIZE = 200_000
 DEFAULT_ENCODING  = "gb18030"
