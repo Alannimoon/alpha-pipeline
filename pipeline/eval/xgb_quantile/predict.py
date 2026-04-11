@@ -209,12 +209,18 @@ def run_xgb_predict(
     extra_features_tag: str | None = None,
     val_only: bool = False,
     slot: str | None = None,
+    test: bool = False,
+    test_factor_root: str | None = None,
+    test_base_root: str | None = None,
 ) -> None:
     """
     val_only=True 时只推理验证集日期，结果写入独立目录，两者互不干扰。
+    test=True 时从 test_factor_root/test_base_root 读取测试集数据，
+              模型仍从标准目录加载，结果写入 xgb_quantile_test/ 目录。
     slot 指定时，从 xgb_quantile_slot/{slot}/ 加载分时段模型，只推理该时段截面。
 
     目录路由规则（extra_features_tag 为空时）：
+      test=True                  → xgb_quantile_test/
       slot=None,  val_only=False → xgb_quantile/
       slot=None,  val_only=True  → xgb_quantile_val/
       slot=<s>,   val_only=False → xgb_quantile_slot/{s}/
@@ -233,8 +239,20 @@ def run_xgb_predict(
     if extra_features_tag:
         print(f"[xgb_predict] 额外特征集={extra_features_tag}，追加特征数={len(extra_features or set())}")
 
+    # ── 测试集模式：覆盖数据来源，输出到独立目录 ─────────────────────────────────
+    if test:
+        if test_factor_root is None or test_base_root is None:
+            raise ValueError("test=True 时须同时提供 test_factor_root 和 test_base_root")
+        factor_root = test_factor_root
+        base_root   = test_base_root
+        time_range  = None
+        model_root  = os.path.join(eval_root, _xgb_base)
+        out_root    = os.path.join(eval_root, f"{_xgb_base}_test")
+        print(f"[xgb_predict] 测试集模式：因子来自 {factor_root}，base 来自 {base_root}")
+        print(f"[xgb_predict] 模型目录：{model_root}")
+        print(f"[xgb_predict] 输出目录：{out_root}")
     # ── 时段路由 ─────────────────────────────────────────────────────────────────
-    if slot is not None:
+    elif slot is not None:
         if slot not in SLOT_RANGES:
             raise ValueError(f"未知时段 slot={slot!r}，可选：{sorted(SLOT_RANGES)}")
         t_start, t_end, _ = SLOT_RANGES[slot]   # 第三元素 stride 仅训练时用
@@ -246,17 +264,18 @@ def run_xgb_predict(
             slot,
         )
         print(f"[xgb_predict] 分时段模式 slot={slot}，时间范围 {t_start}–{t_end}")
+        print(f"[xgb_predict] 模型目录：{model_root}")
+        print(f"[xgb_predict] 输出目录：{out_root}")
     else:
         time_range = None
         model_root = os.path.join(eval_root, _xgb_base)
         out_root = os.path.join(eval_root, f"{_xgb_base}_val" if val_only else _xgb_base)
-
-    print(f"[xgb_predict] 模型目录：{model_root}")
-    print(f"[xgb_predict] 输出目录：{out_root}")
+        print(f"[xgb_predict] 模型目录：{model_root}")
+        print(f"[xgb_predict] 输出目录：{out_root}")
 
     # val_only 时读取训练时保存的验证集日期列表
     val_date_set: set[str] | None = None
-    if val_only:
+    if val_only and not test:
         split_path = os.path.join(model_root, "date_split.json")
         if not os.path.exists(split_path):
             print(f"[xgb_predict] val_only=True 但未找到 date_split.json: {split_path}")
@@ -267,11 +286,10 @@ def run_xgb_predict(
         print(f"[xgb_predict] val_only=True，共 {len(val_date_set)} 个验证日期，输出至 {out_root}")
 
     for factor_pool in factor_pools:
-        ef = extra_features_by_pool.get(factor_pool) if extra_features_by_pool else None
         fc_to_fn = get_factor_cols_for_pool(
             factor_root, factor_pool,
             pools_path=pools_path,
-            extra_features=ef,
+            extra_features=extra_features,
         )
         if not fc_to_fn:
             print(f"[xgb_predict] 没有因子列 (pool={factor_pool})，跳过")

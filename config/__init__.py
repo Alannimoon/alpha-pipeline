@@ -41,6 +41,10 @@ RETURN_HORIZONS = [100, 200, 300]
 # ── 因子参数 ─────────────────────────────────────────────────────────────────
 FACTOR_ROOT    = os.path.join(ROOT, "result", "factor")
 EVAL_ROOT      = os.path.join(ROOT, "result", "eval")
+
+# ── 测试集路径（extract_test.py 输出）────────────────────────────────────────
+TEST_FACTOR_ROOT = os.path.join(ROOT, "result", "test", "factor")
+TEST_BASE_ROOT   = os.path.join(ROOT, "result", "test", "base")
 IC_STATS_ROOT  = os.path.join(ROOT, "result", "eval", "ic_stats")
 
 # ── 因子池白名单（[section] 格式，包含 all / union / intersection 三个池）─────

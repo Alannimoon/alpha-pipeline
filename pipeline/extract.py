@@ -16,7 +16,7 @@ except Exception:
 _HERE = os.path.dirname(os.path.abspath(__file__))   # extract.py 所在目录（即项目根）
 
 DEFAULT_DATA_ROOT = "/home/fund/data"
-DEFAULT_A500_XLS  = os.path.join(_HERE, "..", "config", "a500.xls")   # pipeline/ → ../config/
+DEFAULT_A500_CSV  = os.path.join(_HERE, "..", "config", "a500.csv")
 DEFAULT_OUTDIR    = os.path.join(_HERE, "..", "data")
 DEFAULT_FORMAT    = "parquet"   # csv / parquet
 DEFAULT_CHUNKSIZE = 200_000
@@ -72,7 +72,16 @@ def read_zip_header_cols(zf, inner_csv, encoding="gb18030"):
 
 def load_code_set(path_csv):
     df = pd.read_csv(path_csv)
-    return set(df["code"].astype(str).str.zfill(6).tolist())
+    # 兼容 "code" 和 "SecurityID" 两种列名
+    col = "SecurityID" if "SecurityID" in df.columns else "code"
+    return set(df[col].astype(str).str.zfill(6).tolist())
+
+
+def split_sh_sz(codes: set) -> tuple[set, set]:
+    """按代码前缀拆分沪深：6开头为上交所，其余为深交所。"""
+    sh = {c for c in codes if c.startswith("6")}
+    sz = codes - sh
+    return sh, sz
 
 
 def load_code_sets_from_xls(path_xls):
@@ -101,21 +110,28 @@ def save_one_stock(df, out_path, fmt):
 
 
 def list_2025_days(data_root):
+    return list_days(data_root, prefix="2025")
+
+
+def list_days(data_root, prefix=None):
+    """列出 data_root 下所有8位数字日期目录，prefix 可过滤（如 '2025'、'202512'）。"""
     days = []
     for x in os.listdir(data_root):
         full = os.path.join(data_root, x)
-        if len(x) == 8 and x.isdigit() and x.startswith("2025") and os.path.isdir(full):
-            days.append(x)
+        if len(x) == 8 and x.isdigit() and os.path.isdir(full):
+            if prefix is None or x.startswith(prefix):
+                days.append(x)
     return sorted(days)
 
 
-def is_day_done(outdir, day, fmt):
+def is_day_done(outdir, day, fmt, threshold=None):
     day_dir = os.path.join(os.path.expanduser(outdir), day)
     if not os.path.isdir(day_dir):
         return False
     ext = ".csv" if fmt == "csv" else ".parquet"
     cnt = len([f for f in os.listdir(day_dir) if f.endswith(ext)])
-    return cnt >= DONE_FILE_THRESHOLD
+    limit = threshold if threshold is not None else DONE_FILE_THRESHOLD
+    return cnt >= limit
 
 
 def extract_market_to_stock_files(
@@ -330,8 +346,8 @@ def main():
     ap.add_argument("--n", type=int, default=None, help="Run first N trading days in 2025")
     ap.add_argument("--force", action="store_true", help="Re-run even if day output already exists")
     ap.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
-    ap.add_argument("--a500-xls", default=DEFAULT_A500_XLS,
-                    help="成分券权重 XLS 文件路径（中证指数官网下载格式）")
+    ap.add_argument("--universe-csv", default=DEFAULT_A500_CSV,
+                    help="股票池 CSV（含 SecurityID 列，6位补零）；默认 config/a500.csv")
     ap.add_argument("--outdir", default=DEFAULT_OUTDIR)
     ap.add_argument("--format", choices=["csv", "parquet"], default=DEFAULT_FORMAT)
     ap.add_argument("--chunksize", type=int, default=DEFAULT_CHUNKSIZE)
@@ -340,8 +356,9 @@ def main():
     ap.add_argument("--workers", type=int, default=1, help="并行进程数（按天并行，默认 1）")
     args = ap.parse_args()
 
-    sh_codes, sz_codes = load_code_sets_from_xls(args.a500_xls)
-    all_expected_codes = sh_codes | sz_codes
+    all_expected_codes = load_code_set(args.universe_csv)
+    sh_codes, sz_codes = split_sh_sz(all_expected_codes)
+    print(f"股票池来自 {args.universe_csv}：共 {len(all_expected_codes)} 只（SH={len(sh_codes)}, SZ={len(sz_codes)}）")
 
     # 选日期
     if args.day:

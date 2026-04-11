@@ -138,6 +138,8 @@ def main():
         help="分时段推理：加载时段模型，只推理该时段截面（需先用 xgb_train --slot 训练）")
     p_xgbp.add_argument("--val-only", action="store_true", default=False,
                         help="只推理验证集日期（读取 xgb_quantile/date_split.json），结果写入 xgb_quantile_val/")
+    p_xgbp.add_argument("--test", action="store_true", default=False,
+                        help="测试集推理：从 result/test/factor/ 和 result/test/base/ 读取，结果写入 xgb_quantile_test/")
     p_xgbp.add_argument("--workers", type=int, default=None, help="并行进程数")
     p_xgbp.add_argument("--extra-features", default=None, metavar="NAME",
                         help="额外特征集名称，对应 config/extra_features/{NAME}.txt（如 market_state）；"
@@ -280,6 +282,9 @@ def main():
             extra_features_tag=_ef_tag,
             val_only=args.val_only,
             slot=args.slot,
+            test=args.test,
+            test_factor_root=config.TEST_FACTOR_ROOT,
+            test_base_root=config.TEST_BASE_ROOT,
         )
     else:
         parser.print_help()
