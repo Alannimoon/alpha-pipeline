@@ -26,6 +26,7 @@ from .dataset import (
     SLOT_RANGES,
     build_dataset,
     get_factor_cols_for_pool,
+    load_pools_file,
     split_dates,
 )
 from .loss import build_penalty_matrix, make_cost_eval, make_cost_obj
@@ -237,8 +238,9 @@ def run_xgb_train(
     n_groups_list: list[int] | None = None,
     ret_horizons: list[str] | None = None,
     stride: int | None = None,
-    union_path: str | None = None,
-    intersection_path: str | None = None,
+    pools_path: str | None = None,
+    extra_features: set[str] | None = None,
+    extra_features_tag: str | None = None,
     xgb_params: dict | None = None,
     num_boost_round: int = _DEFAULT_NUM_BOOST_ROUND,
     early_stopping_rounds: int = _DEFAULT_EARLY_STOPPING,
@@ -255,6 +257,9 @@ def run_xgb_train(
     penalty_kwargs = penalty_kwargs or {}
     params = {**_DEFAULT_XGB_PARAMS, **(xgb_params or {})}
 
+    # ── 输出目录前缀（额外特征时加后缀）────────────────────────────────────────
+    _xgb_base = f"xgb_quantile_{extra_features_tag}" if extra_features_tag else "xgb_quantile"
+
     # ── 时段路由 ─────────────────────────────────────────────────────────────────
     if slot is not None:
         if slot not in SLOT_RANGES:
@@ -263,12 +268,16 @@ def run_xgb_train(
         time_range = (t_start, t_end)
         # 用户未显式指定 stride 时，使用时段推荐值（约每天 20 个截面）
         stride = stride if stride is not None else default_stride
-        xgb_root = os.path.join(eval_root, "xgb_quantile_slot", slot)
+        xgb_root = os.path.join(eval_root, f"{_xgb_base}_slot", slot)
         print(f"[xgb_train] 分时段模式 slot={slot}，时间范围 {t_start}–{t_end}，stride={stride}")
     else:
         time_range = None
         stride = stride if stride is not None else 100  # 全天默认 stride
-        xgb_root = os.path.join(eval_root, "xgb_quantile")
+        xgb_root = os.path.join(eval_root, _xgb_base)
+
+    print(f"[xgb_train] 输出目录：{xgb_root}")
+    if extra_features_tag:
+        print(f"[xgb_train] 额外特征集={extra_features_tag}，追加特征数={len(extra_features or set())}")
 
     if dates is None:
         any_fn = next(
@@ -299,8 +308,8 @@ def run_xgb_train(
         fc_to_fn = get_factor_cols_for_pool(
             factor_root,
             factor_pool,
-            union_path=union_path,
-            intersection_path=intersection_path,
+            pools_path=pools_path,
+            extra_features=extra_features,
         )
         print(f"\n=== factor_pool={factor_pool}  特征数={len(fc_to_fn)} ===")
         if not fc_to_fn:

@@ -124,39 +124,67 @@ def _scan_all_factor_cols(factor_root: str) -> dict[str, str]:
     return fc_to_fn
 
 
-def _load_whitelist(path: str) -> set[str]:
-    result: set[str] = set()
+def load_pools_file(path: str) -> dict[str, set[str]]:
+    """
+    解析 [section] 格式的因子池文件，返回 {pool_name: {factor_col, ...}}。
+
+    格式示例：
+        [all]
+        acc_mom_100_200t
+        ...
+        [union]
+        acc_mom_100_200t
+        ...
+        [intersection]
+        acc_mom_100_200t
+        ...
+    """
+    pools: dict[str, set[str]] = {}
+    current: str | None = None
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line and not line.startswith("#"):
-                result.add(line)
-    return result
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                current = line[1:-1]
+                pools[current] = set()
+            elif current is not None:
+                pools[current].add(line)
+    return pools
 
 
 def get_factor_cols_for_pool(
     factor_root: str,
     factor_pool: str,
-    union_path: str | None = None,
-    intersection_path: str | None = None,
+    pools_path: str,
+    extra_features: set[str] | None = None,
 ) -> dict[str, str]:
     """
     返回 {factor_col: factor_name} 映射。
 
     factor_pool
     -----------
-    "all"          → factor_root 下所有列（无白名单过滤）
-    "union"        → factor_pool_union.txt 白名单
-    "intersection" → factor_pool_intersection.txt 白名单
+    "all" / "union" / "intersection" → 从 pools_path 的对应 [section] 读取白名单
+
+    extra_features
+    --------------
+    不为 None 时，追加到白名单（应为调用方按 pool 名从 extra_features 文件提取的集合）。
+    追加的特征仍需在 factor_root 中实际存在，否则推理时会报缺失。
     """
+    pools = load_pools_file(pools_path)
+    wl = pools.get(factor_pool)
+    if wl is None:
+        raise ValueError(
+            f"factor_pools.txt 中未找到 [{factor_pool}] section，"
+            f"可用：{sorted(pools)}"
+        )
+
+    if extra_features:
+        wl = wl | extra_features
+
     all_fc = _scan_all_factor_cols(factor_root)
-    if factor_pool == "union" and union_path:
-        wl = _load_whitelist(union_path)
-        return {fc: fn for fc, fn in all_fc.items() if fc in wl}
-    if factor_pool == "intersection" and intersection_path:
-        wl = _load_whitelist(intersection_path)
-        return {fc: fn for fc, fn in all_fc.items() if fc in wl}
-    return all_fc
+    return {fc: fn for fc, fn in all_fc.items() if fc in wl}
 
 
 # ── 截面标注 ───────────────────────────────────────────────────────────────────

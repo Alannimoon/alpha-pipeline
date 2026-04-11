@@ -43,7 +43,7 @@ FACTOR_ROOT    = os.path.join(ROOT, "result", "factor")
 EVAL_ROOT      = os.path.join(ROOT, "result", "eval")
 IC_STATS_ROOT  = os.path.join(ROOT, "result", "eval", "ic_stats")
 
-# ── 多因子合成因子池白名单 ─────────────────────────────────────────────────────
-# 老师手动筛选结果：三个维度（单调性、IC、RankIC）的并集与交集
-FACTOR_POOL_UNION_TXT        = os.path.join(ROOT, "config", "factor_pool_union.txt")
-FACTOR_POOL_INTERSECTION_TXT = os.path.join(ROOT, "config", "factor_pool_intersection.txt")
+# ── 因子池白名单（[section] 格式，包含 all / union / intersection 三个池）─────
+FACTOR_POOLS_TXT   = os.path.join(ROOT, "config", "factor_pools.txt")
+# 额外特征目录：config/extra_features/{name}.txt，通过 --extra-features <name> 加载
+EXTRA_FEATURES_DIR = os.path.join(ROOT, "config", "extra_features")

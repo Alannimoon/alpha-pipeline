@@ -118,6 +118,9 @@ def main():
         help="分时段训练：只用该时段的样本（open=09:30-10:00 / morning=10:00-11:30 / afternoon=13:00-14:00 / close=14:00-14:57）")
     p_xgbt.add_argument("--data-workers", type=int, default=8,
                         help="数据加载并行进程数（默认 8，仅影响训练集/验证集构建速度）")
+    p_xgbt.add_argument("--extra-features", default=None, metavar="NAME",
+                        help="额外特征集名称，对应 config/extra_features/{NAME}.txt（如 market_state）；"
+                             "追加到所有因子池，输出目录加后缀 _{NAME}")
 
     # ── xgb_predict ────────────────────────────────────────────────────────────
     p_xgbp = sub.add_parser("xgb_predict", help="XGBoost 截面分层推理 + 生成汇总图表")
@@ -136,6 +139,9 @@ def main():
     p_xgbp.add_argument("--val-only", action="store_true", default=False,
                         help="只推理验证集日期（读取 xgb_quantile/date_split.json），结果写入 xgb_quantile_val/")
     p_xgbp.add_argument("--workers", type=int, default=None, help="并行进程数")
+    p_xgbp.add_argument("--extra-features", default=None, metavar="NAME",
+                        help="额外特征集名称，对应 config/extra_features/{NAME}.txt（如 market_state）；"
+                             "需与训练时保持一致")
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -195,12 +201,12 @@ def main():
             factor_name=args.factor,
         )
     elif args.stage == "multi_factor_quantile":
+        from pipeline.eval.xgb_quantile.dataset import load_pools_file
         _pool = args.factor_pool
-        _whitelist_path = None
-        if _pool == "union":
-            _whitelist_path = config.FACTOR_POOL_UNION_TXT
-        elif _pool == "intersection":
-            _whitelist_path = config.FACTOR_POOL_INTERSECTION_TXT
+        _whitelist: set[str] | None = None
+        if _pool in ("union", "intersection"):
+            _pools = load_pools_file(config.FACTOR_POOLS_TXT)
+            _whitelist = _pools.get(_pool)
         run_multi_factor_quantile(
             factor_root=config.FACTOR_ROOT,
             base_root=config.BASE_ROOT,
@@ -211,10 +217,20 @@ def main():
             max_workers=args.workers,
             score_method=args.score_method,
             factor_pool=_pool,
-            whitelist_path=_whitelist_path,
+            whitelist=_whitelist,
             n_groups=args.n_groups,
         )
     elif args.stage == "xgb_train":
+        _ef_tag = getattr(args, "extra_features", None)
+        _ef_set: set[str] | None = None
+        if _ef_tag:
+            import os as _os
+            _ef_path = _os.path.join(config.EXTRA_FEATURES_DIR, f"{_ef_tag}.txt")
+            if not _os.path.exists(_ef_path):
+                raise FileNotFoundError(f"额外特征文件不存在：{_ef_path}")
+            with open(_ef_path, encoding="utf-8") as _f:
+                _ef_set = {l.strip() for l in _f if l.strip() and not l.startswith("#")}
+            print(f"[xgb_train] 已加载额外特征集 {_ef_tag}（{len(_ef_set)} 个特征）")
         run_xgb_train(
             factor_root=config.FACTOR_ROOT,
             base_root=config.BASE_ROOT,
@@ -223,8 +239,9 @@ def main():
             n_groups_list=args.n_groups,
             ret_horizons=args.ret_horizon,
             stride=args.stride,
-            union_path=config.FACTOR_POOL_UNION_TXT,
-            intersection_path=config.FACTOR_POOL_INTERSECTION_TXT,
+            pools_path=config.FACTOR_POOLS_TXT,
+            extra_features=_ef_set,
+            extra_features_tag=_ef_tag,
             num_boost_round=args.num_rounds,
             early_stopping_rounds=args.early_stop,
             penalty_kwargs={
@@ -239,6 +256,16 @@ def main():
         )
     elif args.stage == "xgb_predict":
         _dates = [args.date] if args.date else None
+        _ef_tag = getattr(args, "extra_features", None)
+        _ef_set = None
+        if _ef_tag:
+            import os as _os
+            _ef_path = _os.path.join(config.EXTRA_FEATURES_DIR, f"{_ef_tag}.txt")
+            if not _os.path.exists(_ef_path):
+                raise FileNotFoundError(f"额外特征文件不存在：{_ef_path}")
+            with open(_ef_path, encoding="utf-8") as _f:
+                _ef_set = {l.strip() for l in _f if l.strip() and not l.startswith("#")}
+            print(f"[xgb_predict] 已加载额外特征集 {_ef_tag}（{len(_ef_set)} 个特征）")
         run_xgb_predict(
             factor_root=config.FACTOR_ROOT,
             base_root=config.BASE_ROOT,
@@ -248,8 +275,9 @@ def main():
             ret_horizons=args.ret_horizon,
             dates=_dates,
             max_workers=args.workers,
-            union_path=config.FACTOR_POOL_UNION_TXT,
-            intersection_path=config.FACTOR_POOL_INTERSECTION_TXT,
+            pools_path=config.FACTOR_POOLS_TXT,
+            extra_features=_ef_set,
+            extra_features_tag=_ef_tag,
             val_only=args.val_only,
             slot=args.slot,
         )

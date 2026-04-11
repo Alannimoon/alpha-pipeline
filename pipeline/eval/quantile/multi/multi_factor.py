@@ -211,7 +211,7 @@ def run_multi_factor_quantile(
     max_workers: int | None = None,
     score_method: str = "rank",
     factor_pool: str = "threshold",
-    whitelist_path: str | None = None,
+    whitelist: set[str] | None = None,
     n_groups: int = 10,
 ):
     """
@@ -226,10 +226,9 @@ def run_multi_factor_quantile(
     max_workers    : 并行进程数；建议 4~8，None 时用 CPU 核数
     score_method   : "rank"（分位数得分）/ "zscore"（Z-score ±3截断）/ "minmax"（MinMax 归一化）
     factor_pool    : "threshold" / "union" / "intersection"，决定因子集合和输出子目录
-    whitelist_path : 白名单 txt 路径；factor_pool != "threshold" 时需提供
+    whitelist      : 白名单集合；factor_pool != "threshold" 时需提供
     n_groups       : 分组数，默认 10
     """
-    whitelist  = _load_whitelist(whitelist_path) if whitelist_path else None
     ic_weights = load_ic_weights(ic_stats_root, threshold=threshold, whitelist=whitelist)
 
     print(f"[factor_pool={factor_pool}  score_method={score_method}]")

@@ -36,7 +36,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 import pandas as pd
 
-from .dataset import _RET_HORIZONS, SLOT_RANGES, get_factor_cols_for_pool
+from .dataset import _RET_HORIZONS, SLOT_RANGES, get_factor_cols_for_pool, load_pools_file
 
 try:
     import xgboost as xgb
@@ -204,8 +204,9 @@ def run_xgb_predict(
     ret_horizons: list[str] | None = None,
     dates: list[str] | None = None,
     max_workers: int | None = None,
-    union_path: str | None = None,
-    intersection_path: str | None = None,
+    pools_path: str | None = None,
+    extra_features: set[str] | None = None,
+    extra_features_tag: str | None = None,
     val_only: bool = False,
     slot: str | None = None,
 ) -> None:
@@ -213,11 +214,12 @@ def run_xgb_predict(
     val_only=True 时只推理验证集日期，结果写入独立目录，两者互不干扰。
     slot 指定时，从 xgb_quantile_slot/{slot}/ 加载分时段模型，只推理该时段截面。
 
-    目录路由规则：
+    目录路由规则（extra_features_tag 为空时）：
       slot=None,  val_only=False → xgb_quantile/
       slot=None,  val_only=True  → xgb_quantile_val/
       slot=<s>,   val_only=False → xgb_quantile_slot/{s}/
       slot=<s>,   val_only=True  → xgb_quantile_slot_val/{s}/
+    有 extra_features_tag 时，目录前缀从 xgb_quantile 变为 xgb_quantile_{tag}。
     """
     from pipeline.eval.quantile.multi.charts import run_post_compute
 
@@ -225,23 +227,32 @@ def run_xgb_predict(
     n_groups_list = n_groups_list or [10, 20]
     ret_horizons = ret_horizons or list(_RET_HORIZONS.keys())
 
+    # ── 输出目录前缀（额外特征时加后缀）────────────────────────────────────────
+    _xgb_base = f"xgb_quantile_{extra_features_tag}" if extra_features_tag else "xgb_quantile"
+
+    if extra_features_tag:
+        print(f"[xgb_predict] 额外特征集={extra_features_tag}，追加特征数={len(extra_features or set())}")
+
     # ── 时段路由 ─────────────────────────────────────────────────────────────────
     if slot is not None:
         if slot not in SLOT_RANGES:
             raise ValueError(f"未知时段 slot={slot!r}，可选：{sorted(SLOT_RANGES)}")
         t_start, t_end, _ = SLOT_RANGES[slot]   # 第三元素 stride 仅训练时用
         time_range: tuple[str, str] | None = (t_start, t_end)
-        model_root = os.path.join(eval_root, "xgb_quantile_slot", slot)
+        model_root = os.path.join(eval_root, f"{_xgb_base}_slot", slot)
         out_root = os.path.join(
             eval_root,
-            "xgb_quantile_slot_val" if val_only else "xgb_quantile_slot",
+            f"{_xgb_base}_slot_val" if val_only else f"{_xgb_base}_slot",
             slot,
         )
         print(f"[xgb_predict] 分时段模式 slot={slot}，时间范围 {t_start}–{t_end}")
     else:
         time_range = None
-        model_root = os.path.join(eval_root, "xgb_quantile")
-        out_root = os.path.join(eval_root, "xgb_quantile_val" if val_only else "xgb_quantile")
+        model_root = os.path.join(eval_root, _xgb_base)
+        out_root = os.path.join(eval_root, f"{_xgb_base}_val" if val_only else _xgb_base)
+
+    print(f"[xgb_predict] 模型目录：{model_root}")
+    print(f"[xgb_predict] 输出目录：{out_root}")
 
     # val_only 时读取训练时保存的验证集日期列表
     val_date_set: set[str] | None = None
@@ -256,10 +267,11 @@ def run_xgb_predict(
         print(f"[xgb_predict] val_only=True，共 {len(val_date_set)} 个验证日期，输出至 {out_root}")
 
     for factor_pool in factor_pools:
+        ef = extra_features_by_pool.get(factor_pool) if extra_features_by_pool else None
         fc_to_fn = get_factor_cols_for_pool(
             factor_root, factor_pool,
-            union_path=union_path,
-            intersection_path=intersection_path,
+            pools_path=pools_path,
+            extra_features=ef,
         )
         if not fc_to_fn:
             print(f"[xgb_predict] 没有因子列 (pool={factor_pool})，跳过")
