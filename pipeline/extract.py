@@ -2,6 +2,7 @@ import os
 import zipfile
 import argparse
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
 
@@ -286,17 +287,34 @@ def run_one_day(day, args, sh_codes, sz_codes, all_expected_codes):
 
     status = "OK" if extracted_count == len(all_expected_codes) else "INCOMPLETE"
 
-    append_extract_day_summary(args.outdir, {
+    print(f"Done. Output dir: {out_day_dir}. Total files: {extracted_count}")
+    print(f"Expected: {len(all_expected_codes)}, Extracted: {extracted_count}, Missing: {missing_count}")
+
+    return {
         "Date": day,
         "ExpectedStocks": len(all_expected_codes),
         "ExtractedStocks": extracted_count,
         "MissingCount": missing_count,
         "MissingStocks": ";".join(missing_codes),
         "Status": status,
-    })
+    }
 
-    print(f"Done. Output dir: {out_day_dir}. Total files: {extracted_count}")
-    print(f"Expected: {len(all_expected_codes)}, Extracted: {extracted_count}, Missing: {missing_count}")
+
+def _day_worker(pack):
+    """ProcessPoolExecutor worker：处理单天，返回 summary dict。"""
+    day, args, sh_codes, sz_codes, all_expected_codes = pack
+    try:
+        return run_one_day(day, args, sh_codes, sz_codes, all_expected_codes)
+    except Exception as e:
+        print(f"FAILED {day}: {e}")
+        return {
+            "Date": day,
+            "ExpectedStocks": len(all_expected_codes),
+            "ExtractedStocks": 0,
+            "MissingCount": len(all_expected_codes),
+            "MissingStocks": ";".join(sorted(all_expected_codes)),
+            "Status": f"FAIL: {str(e)}",
+        }
 
 
 def main():
@@ -314,6 +332,7 @@ def main():
     ap.add_argument("--chunksize", type=int, default=DEFAULT_CHUNKSIZE)
     ap.add_argument("--encoding", default=DEFAULT_ENCODING)
     ap.add_argument("--no-progress", action="store_true")
+    ap.add_argument("--workers", type=int, default=1, help="并行进程数（按天并行，默认 1）")
     args = ap.parse_args()
 
     sh_codes, sz_codes = load_code_sets_from_xls(args.a500_xls)
@@ -364,37 +383,69 @@ def main():
 
     ok_days = []
     fail_days = []
+    all_summaries = []
 
-    for i, day in enumerate(todo_days, 1):
-        print(f"\n[{i}/{len(todo_days)}] === processing {day} ===")
+    packs = [
+        (day, args, sh_codes, sz_codes, all_expected_codes)
+        for day in todo_days
+    ]
+
+    if args.workers == 1:
+        for i, pack in enumerate(packs, 1):
+            day = pack[0]
+            print(f"\n[{i}/{len(todo_days)}] === processing {day} ===")
+            try:
+                summary = _day_worker(pack)
+                all_summaries.append(summary)
+                if summary["Status"].startswith("FAIL"):
+                    fail_days.append(day)
+                else:
+                    ok_days.append(day)
+            except KeyboardInterrupt:
+                print("\nInterrupted by user.")
+                break
+    else:
+        print(f"并行模式：workers={args.workers}")
+        # 并行时关掉每只股票的 per-stock 进度条，只显示整体天进度
+        import copy
+        args_quiet = copy.copy(args)
+        args_quiet.no_progress = True
+        packs = [(day, args_quiet, sh_codes, sz_codes, all_expected_codes) for day in todo_days]
+        pbar = tqdm(total=len(todo_days), desc="extract days", unit="day") if tqdm else None
         try:
-            run_one_day(day, args, sh_codes, sz_codes, all_expected_codes)
-            ok_days.append(day)
+            with ProcessPoolExecutor(max_workers=args.workers) as pool:
+                future_to_day = {pool.submit(_day_worker, p): p[0] for p in packs}
+                for fut in as_completed(future_to_day):
+                    day = future_to_day[fut]
+                    try:
+                        summary = fut.result()
+                        all_summaries.append(summary)
+                        if summary["Status"].startswith("FAIL"):
+                            fail_days.append(day)
+                        else:
+                            ok_days.append(day)
+                    except Exception as e:
+                        print(f"FAILED {day}: {e}")
+                        fail_days.append(day)
+                    if pbar:
+                        pbar.update(1)
         except KeyboardInterrupt:
             print("\nInterrupted by user.")
-            break
-        except Exception as e:
-            print(f"FAILED {day}: {e}")
+        finally:
+            if pbar:
+                pbar.close()
 
-            append_extract_day_summary(args.outdir, {
-                "Date": day,
-                "ExpectedStocks": len(all_expected_codes),
-                "ExtractedStocks": 0,
-                "MissingCount": len(all_expected_codes),
-                "MissingStocks": ";".join(sorted(all_expected_codes)),
-                "Status": f"FAIL: {str(e)}",
-            })
-
-            fail_days.append(day)
+    for summary in all_summaries:
+        append_extract_day_summary(args.outdir, summary)
 
     print("\n" + "=" * 60)
     print(f"Finished. OK={len(ok_days)}, FAIL={len(fail_days)}")
     if ok_days:
         print("OK days:")
-        print("  " + " ".join(ok_days))
+        print("  " + " ".join(sorted(ok_days)))
     if fail_days:
         print("FAIL days:")
-        print("  " + " ".join(fail_days))
+        print("  " + " ".join(sorted(fail_days)))
     print("=" * 60)
 
 
