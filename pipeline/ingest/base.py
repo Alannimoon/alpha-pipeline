@@ -36,6 +36,7 @@ CanUseFiveLevelBook  = TradeLike AND 五档完整 AND ask/bid 梯度单调 AND b
 输出列
 ------
 Date, SampleTime, SecurityID, Market,
+PreCloPrice, OpenPrice,
 CumVolume, GapSec,
 PriceType, Price,
 CanUsePrice, CanUseDoubleSideBook, CanUseFiveLevelBook,
@@ -64,7 +65,7 @@ _5L    = _ASK_P + _ASK_V + _BID_P + _BID_V
 
 _NEEDED = [
     "Date", "SampleTime", "SecurityID",
-    "PreCloPrice", "Volume", "TradVolume",
+    "PreCloPrice", "OpenPrice", "Volume", "TradVolume",
     "InstruStatus", "TradingPhaseCode",
     "GapSec",
     "BidPrice1", "BidPrice2", "BidPrice3", "BidPrice4", "BidPrice5",
@@ -154,7 +155,7 @@ def process_one_file(in_path: str) -> tuple[dict, pd.DataFrame]:
     df = pd.read_parquet(in_path)
 
     # parquet 已保留数值类型，保留此步作为防御性保障
-    num_cols = ["PreCloPrice"] + _5L
+    num_cols = ["PreCloPrice", "OpenPrice"] + _5L
     for c in num_cols:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -210,6 +211,8 @@ def process_one_file(in_path: str) -> tuple[dict, pd.DataFrame]:
         "SampleTime":          df["SampleTime"],
         "SecurityID":          df["SecurityID"],
         "Market":              market,
+        "PreCloPrice":         df["PreCloPrice"] if "PreCloPrice" in df.columns else np.nan,
+        "OpenPrice":           df["OpenPrice"]   if "OpenPrice"   in df.columns else np.nan,
         "CumVolume":           df[vol_col] if vol_col else np.nan,
         "GapSec":              df["GapSec"] if "GapSec" in df.columns else np.nan,
         "PriceType":           price_type,

@@ -14,7 +14,7 @@
 输出列
 ------
 Date, SampleTime, SecurityID,
-PreCloPrice, LastPrice, Turnover, TradVolume/Volume, InstruStatus/TradingPhaseCode,
+PreCloPrice, OpenPrice, LastPrice, Turnover, TradVolume/Volume, InstruStatus/TradingPhaseCode,
 AskPrice1-5, AskVolume1-5, BidPrice1-5, BidVolume1-5,
 UpdateTime（原始 tick 时间），GapSec（原始 tick 与采样时刻的间隔秒数）
 """
@@ -76,7 +76,7 @@ def resample_one_file(in_path: str, out_path: str, day: str,
     secid = os.path.splitext(os.path.basename(in_path))[0]
     base = {"Date": day, "SecurityID": secid}
 
-    df = pd.read_csv(in_path)
+    df = pd.read_parquet(in_path) if in_path.endswith(".parquet") else pd.read_csv(in_path)
     if len(df) == 0:
         return {**base, "RawRows": 0, "SampleRows": 0, "Status": "NO_RAW_DATA"}
 
@@ -115,7 +115,7 @@ def resample_one_file(in_path: str, out_path: str, day: str,
     status_col = "InstruStatus"    if "InstruStatus"    in sampled.columns else \
                  ("TradingPhaseCode" if "TradingPhaseCode" in sampled.columns else None)
 
-    ordered = ["Date", "SampleTime", "SecurityID", "PreCloPrice", "LastPrice", "Turnover"]
+    ordered = ["Date", "SampleTime", "SecurityID", "PreCloPrice", "OpenPrice", "LastPrice", "Turnover"]
     if vol_col:    ordered.append(vol_col)
     if status_col: ordered.append(status_col)
     ordered += [
@@ -195,7 +195,7 @@ def run_sample(raw_root: str, sampled_root: str, dates: list[str] | None = None,
         out_dir = os.path.join(sampled_root, day)
         stock_files = sorted(
             f for f in os.listdir(in_dir)
-            if f.endswith(".csv") and not f.startswith("_")
+            if (f.endswith(".parquet") or f.endswith(".csv")) and not f.startswith("_")
         )
         if not stock_files:
             continue

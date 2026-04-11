@@ -1,11 +1,7 @@
 #!/bin/bash
-# 分时段 XGBoost：训练 72 个模型 + 全量推理 + 验证集推理 + PnL 汇总
+# 分时段 XGBoost：逐时段完成训练 + 全量推理 + 验证集推理，最后统一汇总
 #
-# 时段说明（stride 自动按时段长度调整，约每天 20 个截面）：
-#   open      09:30-10:00  stride=10
-#   morning   10:00-11:30  stride=90
-#   afternoon 13:00-14:00  stride=60
-#   close     14:00-14:57  stride=57
+# 每个时段跑完即可查看该时段结果，不需要等全部完成
 #
 # 用法（tmux 里执行）：
 #   tmux new -s xgb_slot
@@ -15,9 +11,6 @@ set -e
 cd "$(dirname "$0")"
 mkdir -p logs
 
-POOLS="union intersection all"
-GROUPS="10 20"
-HORIZONS="ret100 ret200 ret300"
 DATA_WORKERS=32
 PRED_WORKERS=8
 NUM_ROUNDS=1000
@@ -26,80 +19,50 @@ echo "========================================"
 echo "分时段 XGBoost 开始：$(date)"
 echo "========================================"
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 第一阶段：训练（4 slot × 3 pool × 2 n_groups × 3 ret = 72 个模型）
-# ══════════════════════════════════════════════════════════════════════════════
-
 for SLOT in open morning afternoon close; do
     echo ""
     echo "════════════════════════════════════════"
-    echo ">>> 训练 slot=${SLOT}  $(date)"
+    echo ">>> slot=${SLOT} 开始：$(date)"
     echo "════════════════════════════════════════"
+
+    # ── 1. 训练 ──────────────────────────────────────────────────────────────
+    echo ""
+    echo "--- [${SLOT}] 训练 ---"
     python run.py xgb_train \
-        --slot        ${SLOT} \
-        --factor-pool ${POOLS} \
-        --n-groups    ${GROUPS} \
-        --ret-horizon ${HORIZONS} \
-        --num-rounds  ${NUM_ROUNDS} \
+        --slot         ${SLOT} \
+        --factor-pool  union intersection all \
+        --n-groups     10 20 \
+        --ret-horizon  ret100 ret200 ret300 \
+        --num-rounds   ${NUM_ROUNDS} \
         --data-workers ${DATA_WORKERS}
-done
 
-echo ""
-echo "========================================"
-echo "所有训练完成：$(date)"
-echo "========================================"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 第二阶段：全量推理
-# ══════════════════════════════════════════════════════════════════════════════
-
-echo ""
-echo ">>> 开始全量推理（4 slot × 18 组合）：$(date)"
-
-for SLOT in open morning afternoon close; do
+    # ── 2. 全量推理 ──────────────────────────────────────────────────────────
     echo ""
-    echo "--- 全量推理 slot=${SLOT} ---"
+    echo "--- [${SLOT}] 全量推理 ---"
     python run.py xgb_predict \
         --slot        ${SLOT} \
-        --factor-pool ${POOLS} \
-        --n-groups    ${GROUPS} \
-        --ret-horizon ${HORIZONS} \
+        --factor-pool union intersection all \
+        --n-groups    10 20 \
+        --ret-horizon ret100 ret200 ret300 \
         --workers     ${PRED_WORKERS}
-done
 
-echo ""
-echo "========================================"
-echo "全量推理完成：$(date)"
-echo "========================================"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 第三阶段：验证集推理
-# ══════════════════════════════════════════════════════════════════════════════
-
-echo ""
-echo ">>> 开始验证集推理（4 slot × 18 组合）：$(date)"
-
-for SLOT in open morning afternoon close; do
+    # ── 3. 验证集推理 ────────────────────────────────────────────────────────
     echo ""
-    echo "--- 验证集推理 slot=${SLOT} ---"
+    echo "--- [${SLOT}] 验证集推理 ---"
     python run.py xgb_predict \
         --slot        ${SLOT} \
-        --factor-pool ${POOLS} \
-        --n-groups    ${GROUPS} \
-        --ret-horizon ${HORIZONS} \
+        --factor-pool union intersection all \
+        --n-groups    10 20 \
+        --ret-horizon ret100 ret200 ret300 \
         --workers     ${PRED_WORKERS} \
         --val-only
+
+    echo ""
+    echo ">>> slot=${SLOT} 完成：$(date)"
+    echo "════════════════════════════════════════"
 done
 
-echo ""
-echo "========================================"
-echo "验证集推理完成：$(date)"
-echo "========================================"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 第四阶段：PnL 汇总
-# ══════════════════════════════════════════════════════════════════════════════
-
+# ── 4. 汇总（所有时段跑完后）────────────────────────────────────────────────
 echo ""
 echo ">>> 生成 PnL 汇总"
 python pnl_summary.py
