@@ -301,11 +301,16 @@ def run_one_day(day, args, sh_codes, sz_codes, all_expected_codes):
 
 
 def _day_worker(pack):
-    """ProcessPoolExecutor worker：处理单天，返回 summary dict。"""
+    """ProcessPoolExecutor worker：处理单天，返回 summary dict。并行时静默 stdout。"""
+    import io, sys
     day, args, sh_codes, sz_codes, all_expected_codes = pack
+    sys.stdout = io.StringIO()   # 静默 worker 内部所有 print
     try:
-        return run_one_day(day, args, sh_codes, sz_codes, all_expected_codes)
+        result = run_one_day(day, args, sh_codes, sz_codes, all_expected_codes)
+        sys.stdout = sys.__stdout__
+        return result
     except Exception as e:
+        sys.stdout = sys.__stdout__
         print(f"FAILED {day}: {e}")
         return {
             "Date": day,

@@ -39,19 +39,21 @@ except ImportError:
     tqdm = None
 
 from . import bap, mom, acc_mom, neg_skew, amp_slice, rigidity, pv_corr, rsrs, oir, ofd
+from . import market_state
 
 # ── 注册因子 ──────────────────────────────────────────────────────────────────
 _FACTOR_MAP = {
-    "bap":       bap,
-    "mom":       mom,
-    "acc_mom":   acc_mom,
-    "neg_skew":  neg_skew,
-    "amp_slice": amp_slice,
-    "rigidity":  rigidity,
-    "pv_corr":   pv_corr,
-    "rsrs":      rsrs,
-    "oir":       oir,
-    "ofd":       ofd,
+    "bap":          bap,
+    "mom":          mom,
+    "acc_mom":      acc_mom,
+    "neg_skew":     neg_skew,
+    "amp_slice":    amp_slice,
+    "rigidity":     rigidity,
+    "pv_corr":      pv_corr,
+    "rsrs":         rsrs,
+    "oir":          oir,
+    "ofd":          ofd,
+    "market_state": market_state,
 }
 
 
