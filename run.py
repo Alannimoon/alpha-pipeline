@@ -39,6 +39,8 @@ def main():
     def add_common(p):
         p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
         p.add_argument("--workers", type=int, default=None, help="并行进程数（默认 CPU 核数）")
+        p.add_argument("--test",    action="store_true", default=False,
+                       help="测试集模式：使用 data/test/ 和 result/test/ 路径")
 
     def add_eval(p):
         p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
@@ -147,10 +149,12 @@ def main():
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
+    _test = getattr(args, "test", False)
 
     if args.stage == "sample":
         run_sample(
-            raw_root=config.RAW_ROOT, sampled_root=config.SAMPLED_ROOT,
+            raw_root=config.TEST_RAW_ROOT if _test else config.RAW_ROOT,
+            sampled_root=config.TEST_SAMPLED_ROOT if _test else config.SAMPLED_ROOT,
             dates=dates, freq=config.SAMPLE_FREQ,
             am_start=config.AM_START, am_end=config.AM_END,
             pm_start=config.PM_START, pm_end=config.PM_END,
@@ -158,20 +162,22 @@ def main():
         )
     elif args.stage == "clean":
         run_clean(
-            sampled_root=config.SAMPLED_ROOT, cleaned_root=config.CLEANED_ROOT,
+            sampled_root=config.TEST_SAMPLED_ROOT if _test else config.SAMPLED_ROOT,
+            cleaned_root=config.TEST_CLEANED_ROOT if _test else config.CLEANED_ROOT,
             override_csv=config.DROP_OVERRIDES_CSV,
             gap_threshold=config.GAP_REVIEW_THRESHOLD,
             dates=dates, max_workers=args.workers,
         )
     elif args.stage == "base":
         run_base(
-            cleaned_root=config.CLEANED_ROOT, base_root=config.BASE_ROOT,
+            cleaned_root=config.TEST_CLEANED_ROOT if _test else config.CLEANED_ROOT,
+            base_root=config.TEST_BASE_ROOT if _test else config.BASE_ROOT,
             dates=dates, max_workers=args.workers,
         )
     elif args.stage == "factors":
         run_factors(
-            base_root=config.BASE_ROOT,
-            factor_root=config.FACTOR_ROOT,
+            base_root=config.TEST_BASE_ROOT if _test else config.BASE_ROOT,
+            factor_root=config.TEST_FACTOR_ROOT if _test else config.FACTOR_ROOT,
             factor_name=args.factor,
             dates=dates, max_workers=args.workers,
         )

@@ -11,7 +11,7 @@
 #   bash run_xgb_all.sh --extra-features market_state 2>&1 | tee logs/xgb_all_ms.log
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 mkdir -p logs
 
 # ── 解析 --extra-features 参数 ────────────────────────────────────────────────
@@ -63,7 +63,7 @@ echo "========================================"
 
 # ── 2. 验证集推理（18 个组合）────────────────────────────────────────────────
 echo ""
-echo ">>> [2/3] 验证集推理（全部 18 个组合）"
+echo ">>> [2/4] 验证集推理（全部 18 个组合）"
 python run.py xgb_predict \
     --factor-pool union intersection all \
     --n-groups 10 20 \
@@ -74,12 +74,28 @@ python run.py xgb_predict \
 
 echo ""
 echo "========================================"
-echo "推理完成：$(date)"
+echo "验证集推理完成：$(date)"
 echo "========================================"
 
-# ── 3. 汇总 PnL ───────────────────────────────────────────────────────────────
+# ── 3. 测试集推理（18 个组合）────────────────────────────────────────────────
 echo ""
-echo ">>> [3/3] 生成 PnL 汇总"
+echo ">>> [3/4] 测试集推理（全部 18 个组合）"
+python run.py xgb_predict \
+    --factor-pool union intersection all \
+    --n-groups 10 20 \
+    --ret-horizon ret100 ret200 ret300 \
+    --test \
+    --workers 8 \
+    $EXTRA_FEATURES_ARG
+
+echo ""
+echo "========================================"
+echo "测试集推理完成：$(date)"
+echo "========================================"
+
+# ── 4. 汇总 PnL ───────────────────────────────────────────────────────────────
+echo ""
+echo ">>> [4/4] 生成 PnL 汇总"
 python pnl_summary.py
 
 echo ""

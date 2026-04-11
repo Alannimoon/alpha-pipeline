@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
 WORKERS=32
 LOG_DIR="logs"
@@ -23,6 +24,7 @@ run_cmd() {
   echo "[ END ] $(date '+%F %T')  $*" | tee -a "$LOG_FILE"
 }
 
+run_cmd python pipeline/extract.py --workers "$WORKERS"
 run_cmd python run.py sample --workers "$WORKERS"
 run_cmd python run.py clean  --workers "$WORKERS"
 run_cmd python run.py base   --workers "$WORKERS"

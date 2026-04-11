@@ -344,6 +344,8 @@ def main():
     ap.add_argument("--days", nargs="*", default=None, help="Explicit multiple days")
     ap.add_argument("--start-day", default=None, help="Only run days >= this day, e.g. 20250123")
     ap.add_argument("--n", type=int, default=None, help="Run first N trading days in 2025")
+    ap.add_argument("--date-prefix", nargs="*", default=None,
+                    help="扫描指定前缀的日期目录，可多个，如 --date-prefix 202512 202601；不指定时默认扫 2025")
     ap.add_argument("--force", action="store_true", help="Re-run even if day output already exists")
     ap.add_argument("--data-root", default=DEFAULT_DATA_ROOT)
     ap.add_argument("--universe-csv", default=DEFAULT_A500_CSV,
@@ -366,8 +368,14 @@ def main():
     elif args.days:
         selected_days = args.days
     else:
-        all_2025 = list_2025_days(args.data_root)
-        selected_days = all_2025 if args.n is None else all_2025[:args.n]
+        if args.date_prefix:
+            all_scanned = sorted(set(
+                d for prefix in args.date_prefix
+                for d in list_days(args.data_root, prefix=prefix)
+            ))
+        else:
+            all_scanned = list_2025_days(args.data_root)
+        selected_days = all_scanned if args.n is None else all_scanned[:args.n]
 
     # 过滤不存在日期
     all_dirs = set(os.listdir(args.data_root))
@@ -375,7 +383,7 @@ def main():
 
     if args.start_day:
         selected_days = [d for d in selected_days if d >= args.start_day]
-        
+
     all_2025 = list_2025_days(args.data_root)
 
     done_days = []

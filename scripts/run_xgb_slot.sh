@@ -8,7 +8,7 @@
 #   bash run_xgb_slot.sh 2>&1 | tee logs/xgb_slot.log
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 mkdir -p logs
 
 DATA_WORKERS=32
