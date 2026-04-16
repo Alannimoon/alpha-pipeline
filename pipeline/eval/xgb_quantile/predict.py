@@ -75,7 +75,8 @@ def _predict_day(
     time_range: tuple[str, str] | None = None,
 ) -> str:
     out_path = os.path.join(out_dir, f"{day}.parquet")
-    if os.path.exists(out_path):
+    scores_path = os.path.join(out_dir, f"{day}_scores.parquet")
+    if os.path.exists(out_path) and os.path.exists(scores_path):
         return day
 
     name_to_cols: dict[str, list[str]] = defaultdict(list)
@@ -152,6 +153,15 @@ def _predict_day(
     class_vals = np.arange(n_groups, dtype=np.float64)
     scores = (probs * class_vals).sum(axis=1)
 
+    # ── 保存股票级分数（供后续分析，不重复推理）──────────────────────────────
+    os.makedirs(out_dir, exist_ok=True)
+    pd.DataFrame({
+        "Date": day,
+        "SampleTime": merged["SampleTime"].values,
+        "SecurityID": merged["SecurityID"].values,
+        "score": scores.astype(np.float32),
+    }).to_parquet(scores_path, index=False)
+
     ret_vals = merged[ret_col].values.astype(np.float64)
     times = merged["SampleTime"].values
 
@@ -186,7 +196,6 @@ def _predict_day(
         print(f"[WARN][predict][{day}] 所有截面都不足以形成有效分组")
         return day
 
-    os.makedirs(out_dir, exist_ok=True)
     pd.DataFrame(rows).to_parquet(out_path, index=False)
     return day
 

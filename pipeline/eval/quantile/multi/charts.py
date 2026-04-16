@@ -53,7 +53,7 @@ _INTRADAY_SLOTS = [
 def _parquet_files(parquet_dir: str) -> list[str]:
     return sorted(
         f for f in glob.glob(os.path.join(parquet_dir, "*.parquet"))
-        if not os.path.basename(f).startswith("_")
+        if os.path.splitext(os.path.basename(f))[0].isdigit()
     )
 
 

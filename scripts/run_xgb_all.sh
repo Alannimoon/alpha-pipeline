@@ -41,30 +41,30 @@ else
     echo "========================================"
 fi
 
-echo "开始时间：$(date)"
-echo "========================================"
+# echo "开始时间：$(date)"
+# echo "========================================"
 
-# ── 1. 训练全部 18 个模型（--force 覆盖已存在）──────────────────────────────
-echo ""
-echo ">>> [1/3] 训练全部 18 个模型（union + intersection + all × g10/g20 × ret100/200/300）"
-python run.py xgb_train \
-    --factor-pool union intersection all \
-    --n-groups 10 20 \
-    --ret-horizon ret100 ret200 ret300 \
-    --num-rounds 1000 \
-    --data-workers 32 \
-    --force \
-    $EXTRA_FEATURES_ARG
+# # ── 1. 训练全部 18 个模型（--force 覆盖已存在）──────────────────────────────
+# echo ""
+# echo ">>> [1/3] 训练全部 18 个模型（union + intersection + all × g10/g20 × ret100/200/300）"
+# python run.py xgb_train \
+#     --factor-pool union intersection all \
+#     --n-groups 10 20 \
+#     --ret-horizon ret100 ret200 ret300 \
+#     --num-rounds 1000 \
+#     --data-workers 32 \
+#     --force \
+#     $EXTRA_FEATURES_ARG
 
-echo ""
-echo "========================================"
-echo "训练完成：$(date)"
-echo "========================================"
+# echo ""
+# echo "========================================"
+# echo "训练完成：$(date)"
+# echo "========================================"
 
 # ── 2. 验证集推理（18 个组合）────────────────────────────────────────────────
 echo ""
 echo ">>> [2/4] 验证集推理（全部 18 个组合）"
-python run.py xgb_predict \
+OMP_NUM_THREADS=1 python run.py xgb_predict \
     --factor-pool union intersection all \
     --n-groups 10 20 \
     --ret-horizon ret100 ret200 ret300 \
@@ -80,7 +80,7 @@ echo "========================================"
 # ── 3. 测试集推理（18 个组合）────────────────────────────────────────────────
 echo ""
 echo ">>> [3/4] 测试集推理（全部 18 个组合）"
-python run.py xgb_predict \
+OMP_NUM_THREADS=1 python run.py xgb_predict \
     --factor-pool union intersection all \
     --n-groups 10 20 \
     --ret-horizon ret100 ret200 ret300 \
