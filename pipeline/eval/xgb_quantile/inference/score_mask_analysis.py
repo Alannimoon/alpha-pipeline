@@ -12,13 +12,13 @@ score_std 掩码阈值分析脚本
   - 1430 时段（SampleTime >= 14:30:00）
   - 18 组配置（3 pool × 2 n_groups × 3 ret_horizon）
 
-输出：
+输出（result/eval/pnl/inference/）：
   - score_mask_bins.csv    : 分箱分析（10分位箱 × 36配置）
   - score_mask_thresh.csv  : 阈值分析（top 10/20/30/50% × 36配置）
-  - result/eval/score_mask/{setting}/{pool}_g{n}_{ret_h}.png : 柱状图
+  - score_mask/{setting}/{pool}_g{n}_{ret_h}.png : 柱状图
 
 用法：
-    python scripts/score_mask_analysis.py
+    python pipeline/eval/xgb_quantile/inference/score_mask_analysis.py
 """
 
 import os
@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 import config  # noqa: E402
 
@@ -48,6 +48,8 @@ SETTINGS = {
 SLOT_START = "14:30:00"
 N_BINS     = 10
 THRESHOLDS = [0.10, 0.20, 0.30, 0.50]   # 取 score_std 前 x% 的截面
+
+OUT_DIR = os.path.join(config.EVAL_ROOT, "pnl", "inference")
 
 
 # ── 数据加载 ──────────────────────────────────────────────────────────────────
@@ -150,7 +152,6 @@ def threshold_analysis(df: pd.DataFrame, thresholds: list = THRESHOLDS) -> pd.Da
     全量（t=1.0）作为基准行。
     """
     rows = []
-    # 全量基准
     rows.append({
         "top_pct":     1.00,
         "threshold":   df["score_std"].min(),
@@ -175,10 +176,6 @@ def threshold_analysis(df: pd.DataFrame, thresholds: list = THRESHOLDS) -> pd.Da
 
 def plot_bins(bin_df: pd.DataFrame, thresh_df: pd.DataFrame,
               tag: str, out_path: str) -> None:
-    """
-    左图：score_std 分位箱 vs avg_pnl_bps（柱状图 + tick 数次坐标轴）
-    右图：top-X% 阈值过滤后的 avg_pnl_bps（横向对比）
-    """
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # ── 左：分箱 ─────────────────────────────────────────────────────────────
@@ -187,7 +184,7 @@ def plot_bins(bin_df: pd.DataFrame, thresh_df: pd.DataFrame,
     pnl    = bin_df["avg_pnl_bps"].tolist()
     counts = bin_df["n_ticks"].tolist()
     colors = ["#d73027" if v < 0 else "#4575b4" for v in pnl]
-    bars   = ax.bar(bins, pnl, color=colors, alpha=0.85, width=0.7)
+    ax.bar(bins, pnl, color=colors, alpha=0.85, width=0.7)
     ax.axhline(0, color="k", linewidth=0.8, linestyle="--")
     ax.set_xlabel("score_std quantile bin (low -> high)")
     ax.set_ylabel("avg_pnl (bps)")
@@ -200,7 +197,6 @@ def plot_bins(bin_df: pd.DataFrame, thresh_df: pd.DataFrame,
     ax2.set_ylabel("n_ticks", color="orange")
     ax2.tick_params(axis="y", labelcolor="orange")
 
-    # 在柱顶标注数值
     for b, v in zip(bins, pnl):
         ax.text(b, v + (0.15 if v >= 0 else -0.4),
                 f"{v:.1f}", ha="center", va="bottom", fontsize=7)
@@ -252,7 +248,7 @@ def main() -> None:
         print(f"  设置：{setting}")
         print(f"{'='*60}")
 
-        img_root = os.path.join(config.EVAL_ROOT, "score_mask", setting)
+        img_root = os.path.join(OUT_DIR, "score_mask", setting)
 
         for pool in FACTOR_POOLS:
             for n_groups in N_GROUPS_LIST:
@@ -271,44 +267,40 @@ def main() -> None:
 
                     print(f"  {tag}  n={len(df)}")
 
-                    # 分箱分析
                     bin_df = bin_analysis(df)
                     for _, row in bin_df.iterrows():
                         all_bin_rows.append({
-                            "setting":       setting,
-                            "factor_pool":   pool,
-                            "n_groups":      n_groups,
-                            "ret_horizon":   ret_h,
-                            "bin":           int(row["bin"]),
+                            "setting":        setting,
+                            "factor_pool":    pool,
+                            "n_groups":       n_groups,
+                            "ret_horizon":    ret_h,
+                            "bin":            int(row["bin"]),
                             "score_std_mean": round(row["score_std_mean"], 6),
-                            "avg_pnl_bps":   round(row["avg_pnl_bps"], 4),
-                            "n_ticks":       int(row["n_ticks"]),
+                            "avg_pnl_bps":    round(row["avg_pnl_bps"], 4),
+                            "n_ticks":        int(row["n_ticks"]),
                         })
 
-                    # 阈值分析
                     thresh_df = threshold_analysis(df)
                     for _, row in thresh_df.iterrows():
                         all_thresh_rows.append({
-                            "setting":       setting,
-                            "factor_pool":   pool,
-                            "n_groups":      n_groups,
-                            "ret_horizon":   ret_h,
-                            "top_pct":       row["top_pct"],
-                            "threshold":     row["threshold"],
-                            "avg_pnl_bps":   round(row["avg_pnl_bps"], 4),
-                            "n_ticks":       int(row["n_ticks"]),
-                            "coverage":      round(row["coverage"], 4),
+                            "setting":      setting,
+                            "factor_pool":  pool,
+                            "n_groups":     n_groups,
+                            "ret_horizon":  ret_h,
+                            "top_pct":      row["top_pct"],
+                            "threshold":    row["threshold"],
+                            "avg_pnl_bps":  round(row["avg_pnl_bps"], 4),
+                            "n_ticks":      int(row["n_ticks"]),
+                            "coverage":     round(row["coverage"], 4),
                         })
 
-                    # 图表
-                    img_path = os.path.join(
-                        img_root, f"{pool}_g{n_groups}_{ret_h}.png"
-                    )
+                    img_path = os.path.join(img_root, f"{pool}_g{n_groups}_{ret_h}.png")
                     plot_bins(bin_df, thresh_df, tag, img_path)
 
     # ── 保存 CSV ──────────────────────────────────────────────────────────────
-    bin_out    = os.path.join(ROOT, "score_mask_bins.csv")
-    thresh_out = os.path.join(ROOT, "score_mask_thresh.csv")
+    os.makedirs(OUT_DIR, exist_ok=True)
+    bin_out    = os.path.join(OUT_DIR, "score_mask_bins.csv")
+    thresh_out = os.path.join(OUT_DIR, "score_mask_thresh.csv")
     pd.DataFrame(all_bin_rows).to_csv(bin_out, index=False)
     pd.DataFrame(all_thresh_rows).to_csv(thresh_out, index=False)
     print(f"\n已保存：{bin_out}")
@@ -341,7 +333,7 @@ def main() -> None:
     pd.set_option("display.float_format", "{:.4f}".format)
     print(pivot.to_string())
 
-    print("\n图表已保存至：result/eval/score_mask/")
+    print(f"\n图表已保存至：{os.path.join(OUT_DIR, 'score_mask/')}")
 
 
 if __name__ == "__main__":

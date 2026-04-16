@@ -10,7 +10,7 @@ stride 降采样分析脚本 —— 仅看测试集 1430 时段
 每天 tick 数不能被 10 整除时的边界效应，可忽略不计）。
 
 用法：
-    python scripts/stride_analysis.py
+    python pipeline/eval/xgb_quantile/inference/stride_analysis.py
 """
 
 import os
@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 import config  # noqa: E402
 
@@ -41,6 +41,8 @@ SETTINGS = {
 SLOT_START = "14:30:00"
 STRIDE     = 10
 N_OFFSETS  = 10   # offset 0 ~ 9
+
+OUT_DIR = os.path.join(config.EVAL_ROOT, "pnl", "inference")
 
 
 # ── 核心函数 ──────────────────────────────────────────────────────────────────
@@ -94,7 +96,6 @@ def compute_stride_stats(df: pd.DataFrame) -> dict:
         full_mean            : stride=1 全量均值（与 avg_pnl_1430_1457 对齐）
         n_ticks              : 全量有效 tick 数
     """
-    # 每天内对时段 tick 编序号
     df = df.copy()
     df["tick_idx"] = df.groupby("Date").cumcount()
     df["offset"]   = df["tick_idx"] % N_OFFSETS
@@ -175,7 +176,8 @@ def main() -> None:
     result_df = result_df[col_order]
 
     # ── 保存 ─────────────────────────────────────────────────────────────────
-    out_path = os.path.join(ROOT, "stride_analysis.csv")
+    os.makedirs(OUT_DIR, exist_ok=True)
+    out_path = os.path.join(OUT_DIR, "stride_analysis.csv")
     result_df.to_csv(out_path, index=False)
     print(f"\n已保存：{out_path}")
 
