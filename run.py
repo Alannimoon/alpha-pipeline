@@ -123,6 +123,9 @@ def main():
     p_xgbt.add_argument("--extra-features", default=None, metavar="NAME",
                         help="额外特征集名称，对应 config/extra_features/{NAME}.txt（如 market_state）；"
                              "追加到所有因子池，输出目录加后缀 _{NAME}")
+    p_xgbt.add_argument("--test", action="store_true", default=False,
+                        help="用测试集股票池（vol_top100）的数据训练；"
+                             "读取 TEST_FACTOR_ROOT / TEST_BASE_ROOT，输出目录加后缀 _vol100")
 
     # ── xgb_predict ────────────────────────────────────────────────────────────
     p_xgbp = sub.add_parser("xgb_predict", help="XGBoost 截面分层推理 + 生成汇总图表")
@@ -239,9 +242,16 @@ def main():
             with open(_ef_path, encoding="utf-8") as _f:
                 _ef_set = {l.strip() for l in _f if l.strip() and not l.startswith("#")}
             print(f"[xgb_train] 已加载额外特征集 {_ef_tag}（{len(_ef_set)} 个特征）")
+        _train_test = getattr(args, "test", False)
+        _factor_root = config.TEST_FACTOR_ROOT if _train_test else config.FACTOR_ROOT
+        _base_root   = config.TEST_BASE_ROOT   if _train_test else config.BASE_ROOT
+        _ef_tag_out  = (f"{_ef_tag}_vol100" if _ef_tag else "vol100") if _train_test else _ef_tag
+        if _train_test:
+            print(f"[xgb_train] 测试集池训练模式：factor_root={_factor_root}")
+
         run_xgb_train(
-            factor_root=config.FACTOR_ROOT,
-            base_root=config.BASE_ROOT,
+            factor_root=_factor_root,
+            base_root=_base_root,
             eval_root=config.EVAL_ROOT,
             factor_pools=args.factor_pool,
             n_groups_list=args.n_groups,
@@ -249,7 +259,7 @@ def main():
             stride=args.stride,
             pools_path=config.FACTOR_POOLS_TXT,
             extra_features=_ef_set,
-            extra_features_tag=_ef_tag,
+            extra_features_tag=_ef_tag_out,
             num_boost_round=args.num_rounds,
             early_stopping_rounds=args.early_stop,
             penalty_kwargs={

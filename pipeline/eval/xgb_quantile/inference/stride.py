@@ -97,19 +97,21 @@ def compute_stride_stats(df: pd.DataFrame) -> dict:
 
 # ── 可视化 ────────────────────────────────────────────────────────────────────
 
-def plot_stride_range(result_df: pd.DataFrame, out_path: str) -> None:
+def plot_stride_range(result_df: pd.DataFrame, out_path: str,
+                      y_top: float = 20.0, y_bottom: float = 0.0) -> None:
     """
     2×3 分面图（行=setting，列=ret_horizon）。
     每个子图：x 轴为 6 个 pool/g{n} 配置，
     竖线 = [offset_min, offset_max]，圆点 = full_mean。
+    所有子图共享相同 y 轴范围（y_bottom ~ y_top）。
     """
     settings     = ["baseline", "market_state"]
     ret_horizons = ["ret100", "ret200", "ret300"]
     offset_cols  = [f"offset_{k}" for k in range(N_OFFSETS)]
 
     fig, axes = plt.subplots(
-        2, 3, figsize=(14, 8), sharey=False,
-        gridspec_kw={"hspace": 0.45, "wspace": 0.3},
+        2, 3, figsize=(14, 8), sharey=True,
+        gridspec_kw={"hspace": 0.45, "wspace": 0.15},
     )
 
     for r, setting in enumerate(settings):
@@ -146,7 +148,9 @@ def plot_stride_range(result_df: pd.DataFrame, out_path: str) -> None:
 
             ax.set_xticks(xs)
             ax.set_xticklabels(CONFIG_LABELS, rotation=35, ha="right", fontsize=8)
-            ax.set_ylabel("avg_pnl (bps)", fontsize=8)
+            ax.set_ylim(y_bottom, y_top)
+            if c == 0:
+                ax.set_ylabel("avg_pnl (bps)", fontsize=8)
             ax.set_title(f"{setting} | {ret_h}", fontsize=9)
             ax.axhline(0, color="k", linewidth=0.6, linestyle="--")
             ax.grid(axis="y", linewidth=0.4, alpha=0.5)
