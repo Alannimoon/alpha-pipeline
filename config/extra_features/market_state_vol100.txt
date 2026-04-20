@@ -1,9 +1,0 @@
-# market_state 额外特征（7个）
-# 追加到所有因子池（all / union / intersection），三个池加相同的特征
-ret_from_open
-ret_from_prev_close
-time_since_open
-high45_drawdown
-time_since_high45
-low45_rally
-time_since_low45

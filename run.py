@@ -148,7 +148,10 @@ def main():
     p_xgbp.add_argument("--workers", type=int, default=None, help="并行进程数")
     p_xgbp.add_argument("--extra-features", default=None, metavar="NAME",
                         help="额外特征集名称，对应 config/extra_features/{NAME}.txt（如 market_state）；"
-                             "需与训练时保持一致")
+                             "决定追加的特征列，需与训练时保持一致")
+    p_xgbp.add_argument("--model-tag", default=None, metavar="TAG",
+                        help="模型目录路由标签（默认与 --extra-features 相同）；"
+                             "vol100 推理时设为 {extra-features}_vol100 以加载对应模型")
 
     args = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
@@ -296,6 +299,7 @@ def main():
             pools_path=config.FACTOR_POOLS_TXT,
             extra_features=_ef_set,
             extra_features_tag=_ef_tag,
+            model_tag=getattr(args, "model_tag", None),
             val_only=args.val_only,
             slot=args.slot,
             test=args.test,

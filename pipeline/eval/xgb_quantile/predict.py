@@ -216,6 +216,7 @@ def run_xgb_predict(
     pools_path: str | None = None,
     extra_features: set[str] | None = None,
     extra_features_tag: str | None = None,
+    model_tag: str | None = None,
     val_only: bool = False,
     slot: str | None = None,
     test: bool = False,
@@ -228,13 +229,16 @@ def run_xgb_predict(
               模型仍从标准目录加载，结果写入 xgb_quantile_test/ 目录。
     slot 指定时，从 xgb_quantile_slot/{slot}/ 加载分时段模型，只推理该时段截面。
 
-    目录路由规则（extra_features_tag 为空时）：
-      test=True                  → xgb_quantile_test/
-      slot=None,  val_only=False → xgb_quantile/
-      slot=None,  val_only=True  → xgb_quantile_val/
-      slot=<s>,   val_only=False → xgb_quantile_slot/{s}/
-      slot=<s>,   val_only=True  → xgb_quantile_slot_val/{s}/
-    有 extra_features_tag 时，目录前缀从 xgb_quantile 变为 xgb_quantile_{tag}。
+    model_tag：模型目录路由标签，默认与 extra_features_tag 相同。
+      vol100 推理时设为 {extra_features_tag}_vol100，以加载 vol100 训练的模型，
+      同时输出到独立目录，避免与 A500 推理结果混淆。
+
+    目录路由规则（_tag = model_tag or extra_features_tag）：
+      test=True                  → xgb_quantile_{_tag}_test/
+      slot=None,  val_only=False → xgb_quantile_{_tag}/
+      slot=None,  val_only=True  → xgb_quantile_{_tag}_val/
+      slot=<s>,   val_only=False → xgb_quantile_{_tag}_slot/{s}/
+      slot=<s>,   val_only=True  → xgb_quantile_{_tag}_slot_val/{s}/
     """
     from pipeline.eval.quantile.multi.charts import run_post_compute
 
@@ -242,11 +246,14 @@ def run_xgb_predict(
     n_groups_list = n_groups_list or [10, 20]
     ret_horizons = ret_horizons or list(_RET_HORIZONS.keys())
 
-    # ── 输出目录前缀（额外特征时加后缀）────────────────────────────────────────
-    _xgb_base = f"xgb_quantile_{extra_features_tag}" if extra_features_tag else "xgb_quantile"
+    # ── 目录路由标签：model_tag 优先，否则退回 extra_features_tag ───────────────
+    _route_tag = model_tag or extra_features_tag
+    _xgb_base  = f"xgb_quantile_{_route_tag}" if _route_tag else "xgb_quantile"
 
     if extra_features_tag:
         print(f"[xgb_predict] 额外特征集={extra_features_tag}，追加特征数={len(extra_features or set())}")
+    if model_tag and model_tag != extra_features_tag:
+        print(f"[xgb_predict] 模型路由标签={model_tag}（与特征标签不同）")
 
     # ── 测试集模式：覆盖数据来源，输出到独立目录 ─────────────────────────────────
     if test:

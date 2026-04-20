@@ -39,7 +39,7 @@ except ImportError:
     tqdm = None
 
 from . import bap, mom, acc_mom, neg_skew, amp_slice, rigidity, pv_corr, rsrs, oir, ofd
-from . import market_state
+from . import market_state, vol_turnover
 
 # ── 注册因子 ──────────────────────────────────────────────────────────────────
 _FACTOR_MAP = {
@@ -53,7 +53,8 @@ _FACTOR_MAP = {
     "rsrs":         rsrs,
     "oir":          oir,
     "ofd":          ofd,
-    "market_state": market_state,
+    "market_state":  market_state,
+    "vol_turnover":  vol_turnover,
 }
 
 

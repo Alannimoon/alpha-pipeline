@@ -1,14 +1,21 @@
 """
 Prepare float shares lookup table for feature computation.
 
+Step 1 (auto): if data/equ_free_shares.parquet is missing, pull from MySQL:
+  host=192.168.1.11  port=3306  user=datayesread  db=datayes
+  table: equ_free_shares  columns: TICKER_SYMBOL, CHANGE_DATE, FREE_SHARES
+
+Step 2: asof-fill sparse data into a daily lookup table per pool.
+
 Reads:
-  data/equ_free_shares.parquet       -- sparse raw data from MySQL
+  data/equ_free_shares.parquet       -- sparse raw data (auto-fetched if absent)
   result/base/                       -- to derive A500 trading dates
   result/test/base/                  -- to derive vol_top100 trading dates
   config/a500.csv
   config/vol_top100.csv
 
 Writes:
+  data/equ_free_shares.parquet       -- sparse raw data from MySQL (if fetched)
   data/float_shares_filled.parquet   -- (pool, SecurityID, Date, FREE_SHARES)
   data/float_shares_stats.csv        -- change frequency per stock per pool
 """
@@ -21,6 +28,14 @@ import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
+
+MYSQL_CONFIG = dict(
+    host="192.168.1.11",
+    port=3306,
+    user="datayesread",
+    password="33#7MNSqq",
+    database="datayes",
+)
 
 
 # ── 路径 ──────────────────────────────────────────────────────────────────────
@@ -91,12 +106,32 @@ def asof_fill(
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 
+def fetch_from_mysql() -> pd.DataFrame:
+    """从 MySQL 拉取 equ_free_shares 全表，返回 DataFrame 并保存到 SPARSE_PATH。"""
+    import pymysql
+    print("[1] equ_free_shares.parquet not found, fetching from MySQL...")
+    conn = pymysql.connect(**MYSQL_CONFIG)
+    sql = "SELECT TICKER_SYMBOL, CHANGE_DATE, FREE_SHARES FROM equ_free_shares"
+    df = pd.read_sql(sql, conn)
+    conn.close()
+    df["CHANGE_DATE"] = pd.to_datetime(df["CHANGE_DATE"])
+    df["TICKER_SYMBOL"] = df["TICKER_SYMBOL"].astype(str).str.zfill(6)
+    df["FREE_SHARES"] = df["FREE_SHARES"].astype(float)
+    os.makedirs(os.path.dirname(SPARSE_PATH), exist_ok=True)
+    df.to_parquet(SPARSE_PATH, index=False)
+    print(f"    Saved {len(df)} rows -> {SPARSE_PATH}")
+    return df
+
+
 def main():
-    # 1. 加载稀疏原始数据
-    print("[1] Loading sparse data...")
-    sparse = pd.read_parquet(SPARSE_PATH)
-    sparse["CHANGE_DATE"] = pd.to_datetime(sparse["CHANGE_DATE"])
-    sparse["TICKER_SYMBOL"] = sparse["TICKER_SYMBOL"].astype(str).str.zfill(6)
+    # 1. 加载稀疏原始数据（不存在则从 MySQL 提取）
+    if os.path.exists(SPARSE_PATH):
+        print("[1] Loading sparse data from parquet...")
+        sparse = pd.read_parquet(SPARSE_PATH)
+        sparse["CHANGE_DATE"] = pd.to_datetime(sparse["CHANGE_DATE"])
+        sparse["TICKER_SYMBOL"] = sparse["TICKER_SYMBOL"].astype(str).str.zfill(6)
+    else:
+        sparse = fetch_from_mysql()
     print(f"    {len(sparse)} rows, {sparse['TICKER_SYMBOL'].nunique()} tickers")
 
     # 2. 扫描交易日

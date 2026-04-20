@@ -1,0 +1,24 @@
+# market_state（7列）+ vol_turnover（16列）= 23列
+ret_from_open
+ret_from_prev_close
+time_since_open
+high45_drawdown
+time_since_high45
+low45_rally
+time_since_low45
+vt_ret_N20
+vt_ret_N60
+vt_ret_N100
+vt_ret_N300
+vt_high_ret
+vt_low_ret
+vt_high_vs_now
+vt_low_vs_now
+ma_20
+ma_60
+ma_100
+ma_300
+ma_600
+ma_900
+ma_1200
+ma_1500

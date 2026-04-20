@@ -24,7 +24,7 @@ done
 TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
 LOG_FILE="logs/test_data_${TIMESTAMP}.log"
 
-FACTORS=(acc_mom amp_slice bap market_state mom neg_skew ofd oir pv_corr rigidity rsrs)
+FACTORS=(acc_mom amp_slice bap market_state mom neg_skew ofd oir pv_corr rigidity rsrs vol_turnover)
 
 trap 'echo "[FAIL] 行号 $LINENO, 命令: $BASH_COMMAND" | tee -a "$LOG_FILE"' ERR
 
