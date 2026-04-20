@@ -5,9 +5,10 @@
 #   A500  × {+7, +23} × {union, intersection, all}  = 6个
 #   vol100 × {+7, +23} × {union, intersection, all}  = 6个
 #
-# 18次推理：
-#   A500  × {+7, +23} × {验证集, 测试集}  × 3池 = 12次
-#   vol100 × {+7, +23} × 测试集            × 3池 = 6次
+# 推理（每个模型做验证集+测试集，共18次）：
+#   A500  模型：验证集（A500全年val）+ 测试集（43天）× 2套特征 × 3池 = 12次
+#   vol100 模型：验证集（vol100全年val）+ 测试集（43天）× 2套特征 × 3池 = 12次
+#   合计：24次推理（每个模型都做验证集+测试集）
 #
 # 用法：
 #   bash scripts/run_xgb_new_features.sh
@@ -17,7 +18,6 @@ set -e
 cd "$(dirname "$0")/.."
 mkdir -p logs
 
-POOLS="union intersection all"
 EXTRA_LIST="market_state market_state_vol_turnover"
 
 echo "========================================"
@@ -58,6 +58,7 @@ for EXTRA in $EXTRA_LIST; do
         --factor-pool union intersection all \
         --n-groups 20 \
         --ret-horizon ret300 \
+        --pool a500 \
         --val-only \
         --workers 8 \
         --extra-features "${EXTRA}"
@@ -75,21 +76,22 @@ for EXTRA in $EXTRA_LIST; do
         --factor-pool union intersection all \
         --n-groups 20 \
         --ret-horizon ret300 \
-        --test \
+        --pool test \
         --workers 8 \
         --extra-features "${EXTRA}"
 done
 
 # ══════════════════════════════════════════════════════════════════════════════
-# vol100 池：训练 + 测试集推理
+# vol100 池：训练 + 验证集推理 + 测试集推理
 # ══════════════════════════════════════════════════════════════════════════════
 echo ""
 echo "════════════════════════════════"
-echo "vol100 池 — 训练 + 测试集推理"
+echo "vol100 池 — 训练 + 推理"
 echo "════════════════════════════════"
 
 for EXTRA in $EXTRA_LIST; do
     MODEL_TAG="${EXTRA}_vol100"
+
     echo ""
     echo ">>> vol100 训练  extra-features=${EXTRA}  → 模型: xgb_quantile_${MODEL_TAG}/"
     python run.py xgb_train \
@@ -99,8 +101,20 @@ for EXTRA in $EXTRA_LIST; do
         --num-rounds 1000 \
         --data-workers 32 \
         --extra-features "${EXTRA}" \
-        --test \
+        --pool vol100 \
         --force
+
+    echo ""
+    echo ">>> vol100 验证集推理  model-tag=${MODEL_TAG}"
+    OMP_NUM_THREADS=1 python run.py xgb_predict \
+        --factor-pool union intersection all \
+        --n-groups 20 \
+        --ret-horizon ret300 \
+        --pool vol100 \
+        --val-only \
+        --workers 8 \
+        --extra-features "${EXTRA}" \
+        --model-tag "${MODEL_TAG}"
 
     echo ""
     echo ">>> vol100 测试集推理  model-tag=${MODEL_TAG}"
@@ -108,10 +122,11 @@ for EXTRA in $EXTRA_LIST; do
         --factor-pool union intersection all \
         --n-groups 20 \
         --ret-horizon ret300 \
-        --test \
+        --pool test \
         --workers 8 \
         --extra-features "${EXTRA}" \
         --model-tag "${MODEL_TAG}"
+
 done
 
 echo ""

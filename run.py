@@ -39,8 +39,8 @@ def main():
     def add_common(p):
         p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
         p.add_argument("--workers", type=int, default=None, help="并行进程数（默认 CPU 核数）")
-        p.add_argument("--test",    action="store_true", default=False,
-                       help="测试集模式：使用 data/test/ 和 result/test/ 路径")
+        p.add_argument("--pool",    default="a500", choices=["a500", "vol100", "test"],
+                       help="数据池：a500（默认，A500全年）/ vol100（vol100全年）/ test（vol100测试集43天）")
 
     def add_eval(p):
         p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
@@ -123,9 +123,8 @@ def main():
     p_xgbt.add_argument("--extra-features", default=None, metavar="NAME",
                         help="额外特征集名称，对应 config/extra_features/{NAME}.txt（如 market_state）；"
                              "追加到所有因子池，输出目录加后缀 _{NAME}")
-    p_xgbt.add_argument("--test", action="store_true", default=False,
-                        help="用测试集股票池（vol_top100）的数据训练；"
-                             "读取 TEST_FACTOR_ROOT / TEST_BASE_ROOT，输出目录加后缀 _vol100")
+    p_xgbt.add_argument("--pool", default="a500", choices=["a500", "vol100"],
+                        help="训练数据池：a500（默认）/ vol100（vol100全年，输出目录加后缀 _vol100）")
 
     # ── xgb_predict ────────────────────────────────────────────────────────────
     p_xgbp = sub.add_parser("xgb_predict", help="XGBoost 截面分层推理 + 生成汇总图表")
@@ -141,10 +140,10 @@ def main():
     p_xgbp.add_argument("--slot", default=None,
         choices=["open", "morning", "afternoon", "close"],
         help="分时段推理：加载时段模型，只推理该时段截面（需先用 xgb_train --slot 训练）")
+    p_xgbp.add_argument("--pool", default="a500", choices=["a500", "vol100", "test"],
+                        help="推理数据池：a500（默认）/ vol100（vol100全年，用于验证集推理）/ test（43天测试集）")
     p_xgbp.add_argument("--val-only", action="store_true", default=False,
-                        help="只推理验证集日期（读取 xgb_quantile/date_split.json），结果写入 xgb_quantile_val/")
-    p_xgbp.add_argument("--test", action="store_true", default=False,
-                        help="测试集推理：从 result/test/factor/ 和 result/test/base/ 读取，结果写入 xgb_quantile_test/")
+                        help="只推理验证集日期（读取 date_split.json），结果写入 *_val/")
     p_xgbp.add_argument("--workers", type=int, default=None, help="并行进程数")
     p_xgbp.add_argument("--extra-features", default=None, metavar="NAME",
                         help="额外特征集名称，对应 config/extra_features/{NAME}.txt（如 market_state）；"
@@ -153,14 +152,21 @@ def main():
                         help="模型目录路由标签（默认与 --extra-features 相同）；"
                              "vol100 推理时设为 {extra-features}_vol100 以加载对应模型")
 
-    args = parser.parse_args()
+    args  = parser.parse_args()
     dates = [args.date] if getattr(args, "date", None) else None
-    _test = getattr(args, "test", False)
+    _pool = getattr(args, "pool", "a500")
+
+    # ── 路径路由（按 pool 选择三套路径之一）──────────────────────────────────────
+    _path = {
+        "a500":  (config.RAW_ROOT,        config.SAMPLED_ROOT,        config.CLEANED_ROOT,        config.BASE_ROOT,        config.FACTOR_ROOT),
+        "vol100":(config.VOL100_RAW_ROOT,  config.VOL100_SAMPLED_ROOT, config.VOL100_CLEANED_ROOT, config.VOL100_BASE_ROOT, config.VOL100_FACTOR_ROOT),
+        "test":  (config.TEST_RAW_ROOT,    config.TEST_SAMPLED_ROOT,   config.TEST_CLEANED_ROOT,   config.TEST_BASE_ROOT,   config.TEST_FACTOR_ROOT),
+    }[_pool]
+    _raw_root, _sampled_root, _cleaned_root, _base_root, _factor_root = _path
 
     if args.stage == "sample":
         run_sample(
-            raw_root=config.TEST_RAW_ROOT if _test else config.RAW_ROOT,
-            sampled_root=config.TEST_SAMPLED_ROOT if _test else config.SAMPLED_ROOT,
+            raw_root=_raw_root, sampled_root=_sampled_root,
             dates=dates, freq=config.SAMPLE_FREQ,
             am_start=config.AM_START, am_end=config.AM_END,
             pm_start=config.PM_START, pm_end=config.PM_END,
@@ -168,22 +174,19 @@ def main():
         )
     elif args.stage == "clean":
         run_clean(
-            sampled_root=config.TEST_SAMPLED_ROOT if _test else config.SAMPLED_ROOT,
-            cleaned_root=config.TEST_CLEANED_ROOT if _test else config.CLEANED_ROOT,
+            sampled_root=_sampled_root, cleaned_root=_cleaned_root,
             override_csv=config.DROP_OVERRIDES_CSV,
             gap_threshold=config.GAP_REVIEW_THRESHOLD,
             dates=dates, max_workers=args.workers,
         )
     elif args.stage == "base":
         run_base(
-            cleaned_root=config.TEST_CLEANED_ROOT if _test else config.CLEANED_ROOT,
-            base_root=config.TEST_BASE_ROOT if _test else config.BASE_ROOT,
+            cleaned_root=_cleaned_root, base_root=_base_root,
             dates=dates, max_workers=args.workers,
         )
     elif args.stage == "factors":
         run_factors(
-            base_root=config.TEST_BASE_ROOT if _test else config.BASE_ROOT,
-            factor_root=config.TEST_FACTOR_ROOT if _test else config.FACTOR_ROOT,
+            base_root=_base_root, factor_root=_factor_root,
             factor_name=args.factor,
             dates=dates, max_workers=args.workers,
         )
@@ -245,12 +248,13 @@ def main():
             with open(_ef_path, encoding="utf-8") as _f:
                 _ef_set = {l.strip() for l in _f if l.strip() and not l.startswith("#")}
             print(f"[xgb_train] 已加载额外特征集 {_ef_tag}（{len(_ef_set)} 个特征）")
-        _train_test = getattr(args, "test", False)
-        _factor_root = config.TEST_FACTOR_ROOT if _train_test else config.FACTOR_ROOT
-        _base_root   = config.TEST_BASE_ROOT   if _train_test else config.BASE_ROOT
-        _ef_tag_out  = (f"{_ef_tag}_vol100" if _ef_tag else "vol100") if _train_test else _ef_tag
-        if _train_test:
-            print(f"[xgb_train] 测试集池训练模式：factor_root={_factor_root}")
+        _train_pool  = getattr(args, "pool", "a500")
+        _is_vol100   = (_train_pool == "vol100")
+        _factor_root = config.VOL100_FACTOR_ROOT if _is_vol100 else config.FACTOR_ROOT
+        _base_root   = config.VOL100_BASE_ROOT   if _is_vol100 else config.BASE_ROOT
+        _ef_tag_out  = (f"{_ef_tag}_vol100" if _ef_tag else "vol100") if _is_vol100 else _ef_tag
+        if _is_vol100:
+            print(f"[xgb_train] vol100 全年训练模式：factor_root={_factor_root}")
 
         run_xgb_train(
             factor_root=_factor_root,
@@ -287,9 +291,15 @@ def main():
             with open(_ef_path, encoding="utf-8") as _f:
                 _ef_set = {l.strip() for l in _f if l.strip() and not l.startswith("#")}
             print(f"[xgb_predict] 已加载额外特征集 {_ef_tag}（{len(_ef_set)} 个特征）")
+        _pred_pool = getattr(args, "pool", "a500")
+        _pred_factor_root, _pred_base_root, _pred_is_test = {
+            "a500":   (config.FACTOR_ROOT,        config.BASE_ROOT,        False),
+            "vol100": (config.VOL100_FACTOR_ROOT,  config.VOL100_BASE_ROOT, False),
+            "test":   (config.TEST_FACTOR_ROOT,    config.TEST_BASE_ROOT,   True),
+        }[_pred_pool]
         run_xgb_predict(
-            factor_root=config.FACTOR_ROOT,
-            base_root=config.BASE_ROOT,
+            factor_root=_pred_factor_root,
+            base_root=_pred_base_root,
             eval_root=config.EVAL_ROOT,
             factor_pools=args.factor_pool,
             n_groups_list=args.n_groups,
@@ -302,7 +312,7 @@ def main():
             model_tag=getattr(args, "model_tag", None),
             val_only=args.val_only,
             slot=args.slot,
-            test=args.test,
+            test=_pred_is_test,
             test_factor_root=config.TEST_FACTOR_ROOT,
             test_base_root=config.TEST_BASE_ROOT,
         )

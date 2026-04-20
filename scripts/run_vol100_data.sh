@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# 测试集数据准备：提取 → 重采样 → 清洗 → base → 因子
+# vol100 全年数据准备：提取 → 重采样 → 清洗 → base → 因子
 #
 # 股票池：config/vol_top100.csv（100只高波动股票）
-# 日期范围：202512xx 和 202601xx
-# 输出：data/test/（提取）、result/test/（后续各阶段）
+# 日期范围：2025全年
+# 输出：data/vol100/（提取）、result/vol100/（后续各阶段）
 #
 # 用法：
-#   bash run_test_data.sh                  # 全量
-#   bash run_test_data.sh --workers 16     # 指定并行数
+#   bash scripts/run_vol100_data.sh
+#   bash scripts/run_vol100_data.sh --workers 16
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 TIMESTAMP="$(date '+%Y%m%d_%H%M%S')"
-LOG_FILE="logs/test_data_${TIMESTAMP}.log"
+LOG_FILE="logs/vol100_data_${TIMESTAMP}.log"
 
 FACTORS=(acc_mom amp_slice bap market_state mom neg_skew ofd oir pv_corr rigidity rsrs vol_turnover)
 
@@ -37,35 +37,35 @@ run_cmd() {
 }
 
 echo "========================================"          | tee -a "$LOG_FILE"
-echo "测试集数据准备 $(date '+%F %T')"                    | tee -a "$LOG_FILE"
+echo "vol100 全年数据准备 $(date '+%F %T')"               | tee -a "$LOG_FILE"
 echo "workers=$WORKERS  因子数=${#FACTORS[@]}"           | tee -a "$LOG_FILE"
 echo "========================================"          | tee -a "$LOG_FILE"
 
 # ── 1. 提取 ──────────────────────────────────────────────────────────────────
 run_cmd python pipeline/extract.py \
     --universe-csv config/vol_top100.csv \
-    --outdir data/test \
-    --date-prefix 202512 202601 \
+    --outdir data/vol100 \
+    --date-prefix 2025 \
     --workers "$WORKERS"
 
 # ── 2. 重采样 ─────────────────────────────────────────────────────────────────
-run_cmd python run.py sample --pool test --workers "$WORKERS"
+run_cmd python run.py sample --pool vol100 --workers "$WORKERS"
 
 # ── 3. 清洗 ──────────────────────────────────────────────────────────────────
-run_cmd python run.py clean --pool test --workers "$WORKERS"
+run_cmd python run.py clean --pool vol100 --workers "$WORKERS"
 
 # ── 4. Base ──────────────────────────────────────────────────────────────────
-run_cmd python run.py base --pool test --workers "$WORKERS"
+run_cmd python run.py base --pool vol100 --workers "$WORKERS"
 
 # ── 5. 因子 ──────────────────────────────────────────────────────────────────
 for factor in "${FACTORS[@]}"; do
-  run_cmd python run.py factors --pool test --factor "$factor" --workers "$WORKERS"
+  run_cmd python run.py factors --pool vol100 --factor "$factor" --workers "$WORKERS"
 done
 
 echo ""                                                  | tee -a "$LOG_FILE"
 echo "========================================"          | tee -a "$LOG_FILE"
-echo "[DONE] $(date '+%F %T') 测试集数据准备完成"         | tee -a "$LOG_FILE"
-echo "  extract → data/test/"                           | tee -a "$LOG_FILE"
-echo "  factor  → result/test/factor/"                  | tee -a "$LOG_FILE"
+echo "[DONE] $(date '+%F %T') vol100 全年数据准备完成"    | tee -a "$LOG_FILE"
+echo "  extract → data/vol100/"                          | tee -a "$LOG_FILE"
+echo "  factor  → result/vol100/factor/"                 | tee -a "$LOG_FILE"
 echo "日志：$LOG_FILE"                                   | tee -a "$LOG_FILE"
 echo "========================================"          | tee -a "$LOG_FILE"

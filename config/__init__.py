@@ -42,7 +42,14 @@ RETURN_HORIZONS = [100, 200, 300]
 FACTOR_ROOT    = os.path.join(ROOT, "result", "factor")
 EVAL_ROOT      = os.path.join(ROOT, "result", "eval")
 
-# ── 测试集路径（--test 模式使用）─────────────────────────────────────────────
+# ── vol100 全年训练路径（--pool vol100 模式使用）─────────────────────────────
+VOL100_RAW_ROOT     = os.path.join(ROOT, "data", "vol100")
+VOL100_SAMPLED_ROOT = os.path.join(ROOT, "result", "vol100", "sampled")
+VOL100_CLEANED_ROOT = os.path.join(ROOT, "result", "vol100", "cleaned")
+VOL100_BASE_ROOT    = os.path.join(ROOT, "result", "vol100", "base")
+VOL100_FACTOR_ROOT  = os.path.join(ROOT, "result", "vol100", "factor")
+
+# ── 测试集路径（--pool test 模式使用，43天 202512-202601）────────────────────
 TEST_RAW_ROOT     = os.path.join(ROOT, "data", "test")
 TEST_SAMPLED_ROOT = os.path.join(ROOT, "result", "test", "sampled")
 TEST_CLEANED_ROOT = os.path.join(ROOT, "result", "test", "cleaned")
