@@ -39,8 +39,8 @@ def main():
     def add_common(p):
         p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
         p.add_argument("--workers", type=int, default=None, help="并行进程数（默认 CPU 核数）")
-        p.add_argument("--pool",    default="a500", choices=["a500", "vol100", "test"],
-                       help="数据池：a500（默认，A500全年）/ vol100（vol100全年）/ test（vol100测试集43天）")
+        p.add_argument("--pool",    default="a500", choices=["a500", "vol100", "test", "test2"],
+                       help="数据池：a500（默认，A500全年）/ vol100（vol100全年）/ test（vol100测试集43天）/ test2（vol_top100_v2测试集43天）")
 
     def add_eval(p):
         p.add_argument("--date",    default=None, help="只处理指定日期，如 20250102")
@@ -140,8 +140,8 @@ def main():
     p_xgbp.add_argument("--slot", default=None,
         choices=["open", "morning", "afternoon", "close"],
         help="分时段推理：加载时段模型，只推理该时段截面（需先用 xgb_train --slot 训练）")
-    p_xgbp.add_argument("--pool", default="a500", choices=["a500", "vol100", "test"],
-                        help="推理数据池：a500（默认）/ vol100（vol100全年，用于验证集推理）/ test（43天测试集）")
+    p_xgbp.add_argument("--pool", default="a500", choices=["a500", "vol100", "test", "test2"],
+                        help="推理数据池：a500（默认）/ vol100（vol100全年，用于验证集推理）/ test（vol100测试集43天）/ test2（vol_top100_v2测试集43天）")
     p_xgbp.add_argument("--val-only", action="store_true", default=False,
                         help="只推理验证集日期（读取 date_split.json），结果写入 *_val/")
     p_xgbp.add_argument("--workers", type=int, default=None, help="并行进程数")
@@ -161,6 +161,7 @@ def main():
         "a500":  (config.RAW_ROOT,        config.SAMPLED_ROOT,        config.CLEANED_ROOT,        config.BASE_ROOT,        config.FACTOR_ROOT),
         "vol100":(config.VOL100_RAW_ROOT,  config.VOL100_SAMPLED_ROOT, config.VOL100_CLEANED_ROOT, config.VOL100_BASE_ROOT, config.VOL100_FACTOR_ROOT),
         "test":  (config.TEST_RAW_ROOT,    config.TEST_SAMPLED_ROOT,   config.TEST_CLEANED_ROOT,   config.TEST_BASE_ROOT,   config.TEST_FACTOR_ROOT),
+        "test2": (None,                    None,                       None,                       config.TEST2_BASE_ROOT,  config.TEST2_FACTOR_ROOT),
     }[_pool]
     _raw_root, _sampled_root, _cleaned_root, _base_root, _factor_root = _path
 
@@ -292,10 +293,11 @@ def main():
                 _ef_set = {l.strip() for l in _f if l.strip() and not l.startswith("#")}
             print(f"[xgb_predict] 已加载额外特征集 {_ef_tag}（{len(_ef_set)} 个特征）")
         _pred_pool = getattr(args, "pool", "a500")
-        _pred_factor_root, _pred_base_root, _pred_is_test = {
-            "a500":   (config.FACTOR_ROOT,        config.BASE_ROOT,        False),
-            "vol100": (config.VOL100_FACTOR_ROOT,  config.VOL100_BASE_ROOT, False),
-            "test":   (config.TEST_FACTOR_ROOT,    config.TEST_BASE_ROOT,   True),
+        _pred_factor_root, _pred_base_root, _pred_is_test, _pred_test_suffix = {
+            "a500":   (config.FACTOR_ROOT,        config.BASE_ROOT,        False, "test"),
+            "vol100": (config.VOL100_FACTOR_ROOT,  config.VOL100_BASE_ROOT, False, "test"),
+            "test":   (config.TEST_FACTOR_ROOT,    config.TEST_BASE_ROOT,   True,  "test"),
+            "test2":  (config.TEST2_FACTOR_ROOT,   config.TEST2_BASE_ROOT,  True,  "test2"),
         }[_pred_pool]
         run_xgb_predict(
             factor_root=_pred_factor_root,
@@ -313,8 +315,9 @@ def main():
             val_only=args.val_only,
             slot=args.slot,
             test=_pred_is_test,
-            test_factor_root=config.TEST_FACTOR_ROOT,
-            test_base_root=config.TEST_BASE_ROOT,
+            test_factor_root=_pred_factor_root,
+            test_base_root=_pred_base_root,
+            test_suffix=_pred_test_suffix,
         )
     else:
         parser.print_help()

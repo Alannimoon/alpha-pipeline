@@ -244,6 +244,8 @@ def main():
     xgb_msvt_test_root = os.path.join(config.EVAL_ROOT, "xgb_quantile_market_state_vol_turnover_test")
     xgb_ms100_test_root  = os.path.join(config.EVAL_ROOT, "xgb_quantile_market_state_vol100_test")
     xgb_msvt100_test_root = os.path.join(config.EVAL_ROOT, "xgb_quantile_market_state_vol_turnover_vol100_test")
+    xgb_ms_test2_root    = os.path.join(config.EVAL_ROOT, "xgb_quantile_market_state_test2")
+    xgb_msvt_test2_root  = os.path.join(config.EVAL_ROOT, "xgb_quantile_market_state_vol_turnover_test2")
     xgb_slot_root     = os.path.join(config.EVAL_ROOT, "xgb_quantile_slot")
     xgb_slot_val_root = os.path.join(config.EVAL_ROOT, "xgb_quantile_slot_val")
 
@@ -269,6 +271,10 @@ def main():
     xgb_ms100_test   = collect_xgb(xgb_ms100_test_root)
     print("正在扫描 XGBoost market_state_vol_turnover vol100 测试集推理结果...")
     xgb_msvt100_test = collect_xgb(xgb_msvt100_test_root)
+    print("正在扫描 XGBoost market_state test2 推理结果...")
+    xgb_ms_test2     = collect_xgb(xgb_ms_test2_root)
+    print("正在扫描 XGBoost market_state_vol_turnover test2 推理结果...")
+    xgb_msvt_test2   = collect_xgb(xgb_msvt_test2_root)
     print("正在扫描 XGBoost 分时段全量推理结果...")
     xgb_slot         = collect_xgb_slot(xgb_slot_root)
     print("正在扫描 XGBoost 分时段验证集推理结果...")
@@ -289,6 +295,8 @@ def main():
     xgb_msvt_test.to_csv(   os.path.join(out_dir, "pnl_xgb_msvt_test.csv"),     index=False)
     xgb_ms100_test.to_csv(  os.path.join(out_dir, "pnl_xgb_ms100_test.csv"),    index=False)
     xgb_msvt100_test.to_csv(os.path.join(out_dir, "pnl_xgb_msvt100_test.csv"),  index=False)
+    xgb_ms_test2.to_csv(    os.path.join(out_dir, "pnl_xgb_ms_test2.csv"),      index=False)
+    xgb_msvt_test2.to_csv(  os.path.join(out_dir, "pnl_xgb_msvt_test2.csv"),    index=False)
     xgb_slot.to_csv(        os.path.join(out_dir, "pnl_xgb_slot.csv"),          index=False)
     xgb_slot_val.to_csv(    os.path.join(out_dir, "pnl_xgb_slot_val.csv"),      index=False)
 
@@ -298,8 +306,10 @@ def main():
         ("market_state",                "test", xgb_ms_test),
         ("market_state_vol_turnover",   "val",  xgb_msvt_val),
         ("market_state_vol_turnover",   "test", xgb_msvt_test),
-        ("market_state_vol100",         "test", xgb_ms100_test),
+        ("market_state_vol100",         "test",  xgb_ms100_test),
         ("market_state_vol_turnover_vol100", "test", xgb_msvt100_test),
+        ("market_state",                "test2", xgb_ms_test2),
+        ("market_state_vol_turnover",   "test2", xgb_msvt_test2),
     ]
     parts = []
     for tag, split, df in new_results:

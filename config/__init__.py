@@ -57,6 +57,10 @@ TEST_BASE_ROOT    = os.path.join(ROOT, "result", "test", "base")
 TEST_FACTOR_ROOT  = os.path.join(ROOT, "result", "test", "factor")
 IC_STATS_ROOT  = os.path.join(ROOT, "result", "eval", "ic_stats")
 
+# ── 第二测试集路径（--pool test2 模式使用，vol_top100_v2 × 43天）────────────
+TEST2_BASE_ROOT   = os.path.join(ROOT, "result", "test2", "base")
+TEST2_FACTOR_ROOT = os.path.join(ROOT, "result", "test2", "factor")
+
 # ── 因子池白名单（[section] 格式，包含 all / union / intersection 三个池）─────
 FACTOR_POOLS_TXT   = os.path.join(ROOT, "config", "factor_pools.txt")
 # 额外特征目录：config/extra_features/{name}.txt，通过 --extra-features <name> 加载

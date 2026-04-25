@@ -38,3 +38,5 @@ desktop.ini
 *.zip
 *.tar.gz
 *.rar
+predict_10min/
+sig_a500sls/

@@ -222,6 +222,7 @@ def run_xgb_predict(
     test: bool = False,
     test_factor_root: str | None = None,
     test_base_root: str | None = None,
+    test_suffix: str = "test",
 ) -> None:
     """
     val_only=True 时只推理验证集日期，结果写入独立目录，两者互不干扰。
@@ -263,7 +264,7 @@ def run_xgb_predict(
         base_root   = test_base_root
         time_range  = None
         model_root  = os.path.join(eval_root, _xgb_base)
-        out_root    = os.path.join(eval_root, f"{_xgb_base}_test")
+        out_root    = os.path.join(eval_root, f"{_xgb_base}_{test_suffix}")
         print(f"[xgb_predict] 测试集模式：因子来自 {factor_root}，base 来自 {base_root}")
         print(f"[xgb_predict] 模型目录：{model_root}")
         print(f"[xgb_predict] 输出目录：{out_root}")
